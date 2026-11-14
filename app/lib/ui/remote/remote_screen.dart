@@ -23,6 +23,7 @@ import '../web/web_view_page.dart';
 import 'host_key_dialog.dart';
 import 'host_status.dart';
 import 'link_progress.dart';
+import 'mobile_pairing_page.dart';
 import 'network_details_sheet.dart';
 import 'pairing_page.dart';
 import 'relay_credit.dart';
@@ -88,6 +89,7 @@ class RemoteScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = context.l10n;
     final ssh = ref.watch(hostsProvider.select((s) => s.ssh));
+    final mobile = ref.watch(hostsProvider.select((s) => s.mobile));
     final active = ref.watch(activeHostProvider);
     final signedIn = ref.watch(relayAccountProvider.select((a) => a.value?.signedIn ?? false));
     void push(Widget page) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
@@ -127,6 +129,29 @@ class RemoteScreen extends ConsumerWidget {
               spot: Spots.addSshHost,
               subtitle: ssh.isEmpty ? l10n.remoteSshDirect : null,
               onTap: () => unawaited(_addSsh(context, ref)),
+            ),
+          ],
+        ),
+        SettingsSection(
+          title: 'dsh-mobile',
+          footer: Text(l10n.remoteHostsIntro),
+          children: [
+            for (final h in mobile)
+              SettingsTile(
+                icon: hostKindIcon(HostKind.mobile),
+                tinted: false,
+                title: h.name,
+                subtitle: h.origin,
+                onTap: () => _use(context, ref, HostRef.mobile(h.id)),
+                trailing: active == HostRef.mobile(h.id)
+                    ? Icon(AppIcons.selected, size: 20, color: Theme.of(context).colorScheme.primary)
+                    : const SizedBox(width: 20),
+              ),
+            SettingsTile(
+              icon: AppIcons.add,
+              tinted: false,
+              title: l10n.remotePairAddComputer,
+              onTap: () => push(const MobilePairingPage()),
             ),
           ],
         ),

@@ -84,6 +84,7 @@ class HostSheet extends ConsumerWidget {
     final l10n = context.l10n;
     final active = ref.watch(activeHostProvider);
     final ssh = ref.watch(hostsProvider.select((s) => s.ssh));
+    final mobile = ref.watch(hostsProvider.select((s) => s.mobile));
     final account = ref.watch(relayAccountProvider).value;
     final relayHosts = account?.signedIn == true ? account!.hosts : const <RelayHost>[];
 
@@ -145,6 +146,14 @@ class HostSheet extends ConsumerWidget {
                       relay: h,
                       onTap: () => pick(HostRef.relay(h.id, name: h.name)),
                     ),
+                  for (final h in mobile)
+                    _HostRow(
+                      host: HostRef.mobile(h.id),
+                      title: h.name,
+                      subtitle: 'dsh-mobile · ${h.origin}',
+                      active: active == HostRef.mobile(h.id),
+                      onTap: () => pick(HostRef.mobile(h.id)),
+                    ),
                 ],
               ),
               if (relayHosts.length > 1)
@@ -170,10 +179,10 @@ class HostSheet extends ConsumerWidget {
                     },
                   ),
                   SettingsTile(
-                    icon: ssh.isEmpty && relayHosts.isEmpty ? AppIcons.add : AppIcons.configure,
+                    icon: ssh.isEmpty && relayHosts.isEmpty && mobile.isEmpty ? AppIcons.add : AppIcons.configure,
                     tinted: false,
-                    title: ssh.isEmpty && relayHosts.isEmpty ? l10n.remoteConnectComputer : l10n.remoteManageHosts,
-                    subtitle: ssh.isEmpty && relayHosts.isEmpty ? l10n.remoteConnectionMethods : null,
+                    title: ssh.isEmpty && relayHosts.isEmpty && mobile.isEmpty ? l10n.remoteConnectComputer : l10n.remoteManageHosts,
+                    subtitle: ssh.isEmpty && relayHosts.isEmpty && mobile.isEmpty ? l10n.remoteConnectionMethods : null,
                     onTap: () {
                       Navigator.of(context).pop();
                       onManage();

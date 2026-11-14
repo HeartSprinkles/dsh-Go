@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 /// A saved dsh-mobile gateway host. Non-secret fields only; the device token
 /// and the pinned CA live in the [SecretStore] (see [MobileSecrets]).
@@ -84,6 +85,12 @@ class MobileHostConfig {
     deviceId: deviceId ?? this.deviceId,
     deviceExpiresAt: deviceExpiresAt != null ? deviceExpiresAt() : this.deviceExpiresAt,
   );
+
+  static String newId([math.Random? random]) {
+    final r = random ?? math.Random.secure();
+    final hex = List.generate(8, (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+    return 'mobile-$hex';
+  }
 
   @override
   String toString() => 'MobileHostConfig($id $origin)';
