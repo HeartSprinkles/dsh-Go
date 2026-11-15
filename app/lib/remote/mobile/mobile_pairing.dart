@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
@@ -82,7 +83,7 @@ class MobilePairingClient {
   /// can show its fingerprint before pinning. Returns null on 404 (the entry
   /// uses a public certificate and system trust).
   Future<List<int>?> fetchCa(String origin) async {
-    final http = HttpClient()..badCertificateCallback = (_, __, ___) => true;
+    final http = HttpClient()..badCertificateCallback = (_, _, _) => true;
     http.connectionTimeout = const Duration(seconds: 10);
     try {
       final request = await http.getUrl(Uri.parse('$origin/mobile-access/ca.cer'));
@@ -94,7 +95,7 @@ class MobilePairingClient {
         throw MobilePairingException(_readCode(_decode(bytes)) ?? 'authentication_failed', status: status);
       }
       final bytes = await _collect(response, 16 * 1024);
-      if (bytes == null) throw const MobilePairingException('invalid_response', status: status);
+      if (bytes == null) throw MobilePairingException('invalid_response', status: status);
       return bytes;
     } on MobilePairingException {
       rethrow;
@@ -214,11 +215,11 @@ class MobilePairingClient {
     }
     return MobileSession(
       instanceId: responseInstance is String ? responseInstance : (instanceId ?? ''),
-      deviceId: json['deviceId'] is String ? json['deviceId'] as String : '',
-      deviceToken: deviceToken is String ? deviceToken as String : null,
-      sessionToken: sessionToken as String,
-      csrfToken: csrfToken as String,
-      sessionExpiresAt: DateTime.fromMillisecondsSinceEpoch(sessionExpires as int),
+      deviceId: json['deviceId'] is String ? json['deviceId'] : '',
+      deviceToken: deviceToken is String ? deviceToken : null,
+      sessionToken: sessionToken,
+      csrfToken: csrfToken,
+      sessionExpiresAt: DateTime.fromMillisecondsSinceEpoch(sessionExpires),
       deviceExpiresAt: deviceExpires is int ? DateTime.fromMillisecondsSinceEpoch(deviceExpires) : null,
     );
   }

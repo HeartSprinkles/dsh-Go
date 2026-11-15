@@ -44,7 +44,7 @@ HostLinkError mobileError(MobilePairingException e) {
     _ => HostLinkError(
       HostLinkErrorKind.unreachable,
       appL10n.commonConnectionFailed,
-      detail: '$code',
+      detail: code,
       retryable: true,
     ),
   };
