@@ -1,0 +1,97 @@
+# Publishes an already-built test APK from a Test APK run as a release asset,
+# so it can be downloaded from GitHub instead of pulled through the Actions
+# artifact API. Verifies the package id before publishing.
+name: Publish test APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Test APK run id (the "Test APK" workflow run that built it)'
+        required: true
+        type: string
+      tag:
+        description: 'Release tag to publish under'
+        required: true
+        default: test-apk
+      prerelease:
+        description: 'Mark the release as a pre-release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-test-apk-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download the built APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # Artifacts land in per-artifact subdirectories; flatten them.
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --dir dist
+          find dist -mindepth 2 -name '*.apk' -exec mv -f {} dist/ \;
+          find dist -mindepth 1 -type d -empty -delete
+          ls -lh dist
+          test -n "$(find dist -maxdepth 1 -name '*.apk' -print -quit)" || { echo "no APK in run $RUN_ID" >&2; exit 1; }
+          ( cd dist && sha256sum *.apk > SHA256SUMS && cat SHA256SUMS )
+
+      # The whole point of this build is the suffixed id: it installs beside the
+      # official app. Refuse to publish an APK that carries the release id.
+      - name: Verify the package id
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+        run: |
+          set -euo pipefail
+          aapt2=$(ls -1d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -n 1)
+          [ -n "$aapt2" ] || { echo "aapt2 not found" >&2; exit 1; }
+          for apk in dist/*.apk; do
+            echo "=== $apk ==="
+            "$aapt2" dump badging "$apk" | sed -n '1p'
+            id=$("$aapt2" dump badging "$apk" | sed -nE "s/^package: name='([^']+)'.*/\1/p")
+            [ "$id" = "io.github.ccch1mneyyy.dsh_app.test" ] || {
+              echo "package id is '$id', expected io.github.ccch1mneyyy.dsh_app.test" >&2
+              exit 1
+            }
+          done
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          RUN_ID: ${{ inputs.run_id }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          notes="Test build from run $RUN_ID.
+          Built with the .test applicationId (io.github.ccch1mneyyy.dsh_app.test), so it
+          installs alongside the official app. Debug-signed: not for distribution."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.apk dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/*.apk dist/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "dsh-go test build ($TAG)" \
+              --notes "$notes" \
+              $([ "$PRERELEASE" = "true" ] && echo --prerelease)
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name)  \(.size) bytes"'
