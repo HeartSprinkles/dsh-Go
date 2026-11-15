@@ -64,6 +64,16 @@ jobs:
             runtime/.work
           key: runtime-full-${{ hashFiles('runtime/build-runtime.sh', 'runtime/locks/**', 'runtime/patches/**', 'runtime/lib/rtbuild.py') }}
 
+      # libtawcroot's build.py requires this exact NDK (runtime/tawcroot/source.json);
+      # the runner image ships a different one, and release builds must carry it.
+      - name: Install the pinned NDK
+        run: |
+          ndk=$(python3 -c "import json;print(json.load(open('runtime/tawcroot/source.json'))['ndkVersion'])")
+          echo "NDK $ndk"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+
       - name: Build the runtime bundle
         run: |
           # arm64-v8a and x86_64; the app flavors read runtime/out/<abi>.
