@@ -65,6 +65,13 @@ void registerThirdPartyLicenses() {
     yield LicenseEntryWithLineBreaks(<String>[
       'Streaming Zipformer zh-en (sherpa-onnx)',
     ], await rootBundle.loadString('assets/licenses/streaming-asr-model-APACHE-2.0.txt'));
+    // iroh's Rust core is linked into every APK (libirohdart_ffi.so); the crate
+    // is dual-licensed and both texts travel with it. MIT is the one this
+    // project relies on, so it leads; Apache-2.0 follows in the same entry.
+    yield LicenseEntryWithLineBreaks(<String>[
+      'iroh (iroh_flutter)',
+    ], '${await rootBundle.loadString('assets/licenses/iroh-1.4.1-LICENSE-MIT.txt')}'
+        '\n${await rootBundle.loadString('assets/licenses/iroh-1.4.1-LICENSE-APACHE.txt')}');
   });
 }
 

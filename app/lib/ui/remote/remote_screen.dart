@@ -141,7 +141,7 @@ class RemoteScreen extends ConsumerWidget {
                 icon: hostKindIcon(HostKind.mobile),
                 tinted: false,
                 title: h.name,
-                subtitle: h.origin,
+                subtitle: mobileHostSubtitle(h),
                 onTap: () => _use(context, ref, HostRef.mobile(h.id)),
                 trailing: active == HostRef.mobile(h.id)
                     ? Icon(AppIcons.selected, size: 20, color: Theme.of(context).colorScheme.primary)

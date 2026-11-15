@@ -5,6 +5,13 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+/// The request header that carries a browser-style origin.
+///
+/// `dart:io`'s [HttpHeaders] has no constant for it (unlike `hostHeader` or
+/// `refererHeader`), and the gateway's external-trust gate keys off this exact
+/// name on pairing, renew and every `/api/*` request.
+const originHeaderName = 'origin';
+
 /// A short dsh-mobile session (or the outcome of a pair/renew).
 class MobileSession {
   const MobileSession({
@@ -62,11 +69,23 @@ String caFingerprint(List<int> der) => sha256.convert(der).toString();
 
 /// Native HTTPS pairing, renewal and probe for a dsh-mobile gateway.
 class MobilePairingClient {
-  MobilePairingClient({this.label = 'DeepSeek Harness (dsh-go)'});
+  MobilePairingClient({this.label = 'DeepSeek Harness (dsh-go)', this.clientFactory});
 
   final String label;
 
+  /// How to build the HTTP client for one request. The default speaks HTTPS
+  /// straight to [origin]; an iroh host passes a factory that dials the tunnel
+  /// and trusts the descriptor's CA, so the same pair/renew/probe calls work
+  /// over either data plane.
+  final HttpClient Function({String? trustedPem})? clientFactory;
+
   HttpClient _client({String? trustedPem}) {
+    final factory = clientFactory;
+    if (factory != null) {
+      final http = factory(trustedPem: trustedPem);
+      http.connectionTimeout = const Duration(seconds: 10);
+      return http;
+    }
     if (trustedPem != null && trustedPem.isNotEmpty) {
       final context = SecurityContext(withTrustedRoots: true)
         ..setTrustedCertificatesBytes(utf8.encode(trustedPem));
@@ -171,7 +190,7 @@ class MobilePairingClient {
       // without an Origin (`assertExternalTrust` then acceptsOrigin(undefined)
       // fails, answering 403 "forbidden"). dsh_client deliberately sends no
       // Origin for the local engine, but this gateway needs its own origin.
-      request.headers.set(HttpHeaders.originHeader, _originOf(origin));
+      request.headers.set(originHeaderName, _originOf(origin));
       request.write(jsonEncode(body));
       final response = await request.close();
       final status = response.statusCode;

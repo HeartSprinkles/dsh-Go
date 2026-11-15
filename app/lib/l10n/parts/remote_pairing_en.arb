@@ -53,5 +53,12 @@
   "mobilePairButton": "Pair this computer",
   "mobilePairInvalidLink": "That pairing link or key is incomplete; copy it again",
   "mobilePairNeedOrigin": "Enter the server address (e.g. https://192.168.1.5:3443)",
-  "mobilePairFailed": "Pairing did not complete"
+  "mobilePairFailed": "Pairing did not complete",
+  "mobilePairIrohDescriptorHint": "The iroh pairing description the computer shows",
+  "mobilePairIrohInvalid": "That pairing description is not valid; copy it again",
+  "mobilePairIrohStale": "That pairing description has expired. Show a new one on the computer.",
+  "mobileIrohMissingEndpoint": "This iroh host is missing its endpoint id. Pair it again.",
+  "mobileIrohNeedRepair": "This phone's iroh identity is gone. Pair it with the computer again.",
+  "mobileTransportIroh": "iroh",
+  "mobileTransportLan": "LAN"
 }

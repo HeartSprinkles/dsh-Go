@@ -87,6 +87,11 @@ String hostLabel(HostKind kind, String? name) => switch (kind) {
   HostKind.mobile => '${_short(name ?? 'dsh-mobile')} · dsh-mobile',
 };
 
+/// Subtitle for a dsh-mobile host: its origin, plus the data plane when it is
+/// not the default LAN path.
+String mobileHostSubtitle(MobileHostConfig config) =>
+    config.isIroh ? 'iroh · ${config.origin}' : config.origin;
+
 String _short(String name) {
   final t = name.trim();
   return t.length <= 14 ? t : '${t.substring(0, 13)}…';
@@ -276,6 +281,14 @@ class HostsController extends Notifier<HostsState> {
       } else {
         await _secrets.write(MobileSecrets.caPemKey(config.id), secrets.caPem);
       }
+      // The iroh identity is written on every save so re-pairing keeps the
+      // endpoint the host already trusts; an empty value means "not an iroh
+      // host", and the stale key goes.
+      if (secrets.irohSecretKey.isEmpty) {
+        await _secrets.delete(MobileSecrets.irohSecretKeyKey(config.id));
+      } else {
+        await _secrets.write(MobileSecrets.irohSecretKeyKey(config.id), secrets.irohSecretKey);
+      }
     }
     final hosts = [...state.mobile];
     final index = hosts.indexWhere((h) => h.id == config.id);
@@ -299,6 +312,7 @@ class HostsController extends Notifier<HostsState> {
     return MobileSecrets(
       deviceToken: await get(MobileSecrets.deviceTokenKey(id)) ?? '',
       caPem: await get(MobileSecrets.caPemKey(id)) ?? '',
+      irohSecretKey: await get(MobileSecrets.irohSecretKeyKey(id)) ?? '',
     );
   }
 
@@ -306,7 +320,11 @@ class HostsController extends Notifier<HostsState> {
   Future<void> removeMobile(String id) async {
     await _loaded;
     await _persistMobile([...state.mobile.where((h) => h.id != id)]);
-    for (final key in [MobileSecrets.deviceTokenKey(id), MobileSecrets.caPemKey(id)]) {
+    for (final key in [
+      MobileSecrets.deviceTokenKey(id),
+      MobileSecrets.caPemKey(id),
+      MobileSecrets.irohSecretKeyKey(id),
+    ]) {
       try {
         await _secrets.delete(key);
       } catch (_) {}

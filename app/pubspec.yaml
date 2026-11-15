@@ -99,6 +99,11 @@ dependencies:
   # Full image decoding in the pet importer's background isolate. MIT.
   image: 4.12.0
   mobile_scanner: ^7.5.0
+  # iroh QUIC transport for dsh-mobile hosts (lib/remote/mobile/iroh). The
+  # Flutter plugin builds the Rust core through Cargokit, so an Android build
+  # needs a Rust toolchain and a per-ABI NDK compile. Apache-2.0; iroh_quic is
+  # its Dart API and comes along.
+  iroh_flutter: ^1.4.0
 
 dev_dependencies:
   flutter_test:
@@ -160,6 +165,9 @@ flutter:
     - assets/licenses/unicode-15.0.txt
     - assets/licenses/jquery-3.7.1-LICENSE.txt
     - assets/licenses/lodash-4.17.21-LICENSE.txt
+    # iroh's Rust core is linked into every APK; its two licences travel with it.
+    - assets/licenses/iroh-1.4.1-LICENSE-APACHE.txt
+    - assets/licenses/iroh-1.4.1-LICENSE-MIT.txt
     # Phone layout for the embedded DSH Web (see lib/ui/web/web_view_page.dart).
     - assets/web/
     # Whale-tail activity sprites (lib/ui/chat/widgets/whale_tail.dart),

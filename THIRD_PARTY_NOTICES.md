@@ -313,6 +313,9 @@ Libraries.dev metal-fx, translated to Flutter GLSL.
 | smart-turn v3.2（模型文件 `assets/speech/smart-turn-v3.2-cpu.onnx`） | `f766f81` | BSD-2-Clause | Copyright (c) 2024–2025, Daily | 语音通话判断一句话说完没有 |
 | sherpa-onnx（pub 包 `sherpa_onnx`、`sherpa_onnx_android_*`） | 1.13.4 | Apache-2.0 | Xiaomi Corporation 与 k2-fsa 贡献者 | 手机上的流式语音识别；它带的 `libonnxruntime.so` 也是 ONNX Runtime 1.27.0，只打包一份 |
 | Streaming Zipformer 中英双语模型（不随 APK，按需下载，csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20） | `98590b7` | Apache-2.0 | csukuangfj；上游 pfluo/k2fsa-zipformer-chinese-english-mixed | 实时字幕；许可全文随 APK 的 `assets/licenses/streaming-asr-model-APACHE-2.0.txt` |
+| iroh_flutter（pub 包，含 Cargokit 编译的 Rust 核心 `libirohdart_ffi.so`，每个 ABI 一份） | 1.4.0 | Apache-2.0，另含 Rust `iroh` crate 的 MIT OR Apache-2.0 | Copyright the iroh_dart authors；Rust 侧 Copyright 2025 N0, INC. | dsh-mobile 主机的 iroh QUIC 传输（`app/lib/remote/mobile/iroh/`）；两种许可全文随 APK，见 `assets/licenses/iroh-1.4.1-LICENSE-{APACHE,MIT}.txt` |
+| iroh_quic（pub 包，iroh_flutter 的 Dart 侧 API，经 flutter_rust_bridge 调用同一核心） | 1.4.0 | Apache-2.0 | Copyright the iroh_dart authors | 同上；不额外打包二进制 |
+| iroh / noq（Rust crate，静态链接进 `libirohdart_ffi.so`） | iroh 1.4.1、noq 1.4.0 | MIT OR Apache-2.0 | Copyright 2025 N0, INC. | QUIC 与打洞 |
 
 ### tawcroot（tawc，MIT）
 

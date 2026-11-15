@@ -132,6 +132,8 @@ enum HostLinkDiagnosticCode {
   remoteConnectionFailed,
   remoteRateLimited,
   remoteHistoryModeChanged,
+  irohTunnelFailed,
+  irohPeerRefused,
 }
 
 enum NetworkIpVersion { ipv4, ipv6 }

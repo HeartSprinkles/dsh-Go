@@ -3,9 +3,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dsh_client/dsh_client.dart';
+import 'package:iroh_flutter/iroh_flutter.dart';
 
 import '../../l10n/l10n.dart';
 import '../link_status.dart';
+import '../ssh/local_forward.dart';
+import 'iroh/iroh_channel.dart';
+import 'iroh/iroh_http_client.dart';
 import 'mobile_config.dart';
 import 'mobile_pairing.dart';
 
@@ -50,8 +54,36 @@ HostLinkError mobileError(MobilePairingException e) {
   };
 }
 
+/// Maps an iroh transport failure to a [HostLinkError].
+///
+/// The distinction that matters to the person is "the computer is not reachable
+/// right now" (retryable, the companion may be down or the path not yet found)
+/// versus "the host will not talk to this phone" (not retryable: the pairing was
+/// revoked or this phone's identity is not recognised).
+HostLinkError irohError(IrohChannelException e) {
+  final retryable = switch (e.reason) {
+    'handshake_refused' => false,
+    'pair-fail' || 'not_paired' || 'unknown_endpoint' || 'endpoint_mismatch' => false,
+    'bad_handshake' => false,
+    _ => true,
+  };
+  return HostLinkError(
+    retryable ? HostLinkErrorKind.unreachable : HostLinkErrorKind.authFailed,
+    retryable ? appL10n.remoteErrHostUnreachable : appL10n.remoteErrDshSignInExpired,
+    detail: e.detail == null ? e.reason : '${e.reason}: ${e.detail}',
+    retryable: retryable,
+    diagnosticCode: retryable
+        ? HostLinkDiagnosticCode.irohTunnelFailed
+        : HostLinkDiagnosticCode.irohPeerRefused,
+  );
+}
+
 /// A dsh-mobile gateway host: renew the short session, then talk to the
 /// upstream `dsh web` through the gateway's HTTPS proxy with a pinned CA.
+///
+/// A [MobileTransport.iroh] host reaches the same gateway through an iroh QUIC
+/// tunnel instead of a route to the computer: the link owns one endpoint and one
+/// loopback forwarder for its whole life, and a reconnect rebuilds both.
 class MobileHostLink implements HostLink {
   MobileHostLink({
     required this.config,
@@ -80,6 +112,10 @@ class MobileHostLink implements HostLink {
   Future<DshClient>? _opening;
   bool _closed = false;
   bool _recovering = false;
+
+  /// The iroh data plane, rebuilt on every attempt: [Endpoint]s own sockets and
+  /// a relay task, so the previous one is always torn down first.
+  _IrohTransport? _iroh;
 
   @override
   HostLinkStatus get status => _status;
@@ -129,28 +165,50 @@ class MobileHostLink implements HostLink {
     _emit(HostLinkStatus(HostLinkPhase.failed, step: _status.step, completed: _status.completed, error: error));
   }
 
-  /// One full attempt: renew a session, build the client, wait for the mux.
+  /// One full attempt: build the data plane, renew a session, build the client,
+  /// wait for the mux.
   Future<DshClient> _connectOnce() async {
     final secrets = await loadSecrets();
     if (secrets.deviceToken.isEmpty) {
       throw HostLinkError(HostLinkErrorKind.authFailed, appL10n.remoteErrSignIn, retryable: false);
     }
 
+    // Tear the previous data plane down before a new one exists: two endpoints
+    // would both hold sockets and relay connections.
+    await _closeIroh();
+
+    final transport = config.isIroh ? await _openIroh(secrets) : null;
+    final pairing = transport == null
+        ? _pairing
+        : MobilePairingClient(
+            label: _pairing.label,
+            clientFactory: ({String? trustedPem}) =>
+                IrohTunnelHttpClient(caCertificatePem: secrets.caPem, tunnelPort: transport.port),
+          );
+
     final MobileSession session;
     try {
-      session = await _pairing.renew(
+      session = await pairing.renew(
         config.origin,
         secrets.deviceToken,
         instanceId: config.instanceId,
         trustedPem: secrets.caPem.isEmpty ? null : secrets.caPem,
       );
     } on MobilePairingException catch (e) {
+      await _closeIroh();
       throw mobileError(e);
+    } on Object {
+      await _closeIroh();
+      rethrow;
     }
 
     final connection = DshConnection(
       Uri.parse(config.origin),
-      securityContext: secrets.caPem.isEmpty ? null : _securityContext(secrets.caPem),
+      // An iroh tunnel already pins the CA on its own HttpClient; setting a
+      // securityContext as well would override the client and drop the
+      // connectionFactory that points TLS at the tunnel.
+      httpClient: transport?.httpClient,
+      securityContext: transport == null && secrets.caPem.isNotEmpty ? _securityContext(secrets.caPem) : null,
       extraCookies: {'dsh_ma_session': session.sessionToken, 'dsh_ma_device': secrets.deviceToken},
       // The gateway's external-trust gate refuses a request without Origin on
       // both /api/* and the /api/remote.mux upgrade (403, not 401). The stock
@@ -158,7 +216,7 @@ class MobileHostLink implements HostLink {
       // gateway is the opposite case and wants its own origin on every request.
       extraHeaders: {
         'x-dsh-mobile-csrf': session.csrfToken,
-        HttpHeaders.originHeader: _originOf(config.origin),
+        originHeaderName: _originOf(config.origin),
       },
     );
     final client = DshClient(connection);
@@ -166,11 +224,13 @@ class MobileHostLink implements HostLink {
       await client.mux.ready(timeout: const Duration(seconds: 20));
     } on Object {
       await client.close().catchError((_) {});
+      await _closeIroh();
       throw HostLinkError(HostLinkErrorKind.unreachable, appL10n.commonConnectionFailed, retryable: true);
     }
 
     if (_closed) {
       await client.close().catchError((_) {});
+      await _closeIroh();
       throw StateError('link closed');
     }
     final previous = _client;
@@ -180,10 +240,87 @@ class MobileHostLink implements HostLink {
       _clients.add(client);
       unawaited(previous.close().catchError((_) {}));
     }
-    _emit(
-      const HostLinkStatus(HostLinkPhase.connected, completed: {HostLinkStep.connect, HostLinkStep.login}),
-    );
+    _emit(const HostLinkStatus(HostLinkPhase.connected, completed: {HostLinkStep.connect, HostLinkStep.login}));
     return client;
+  }
+
+  /// Dials the iroh host, forwards a loopback port to it, and returns the two
+  /// pieces the client needs. Kept on the link so [close] can release them.
+  Future<_IrohTransport> _openIroh(MobileSecrets secrets) async {
+    final endpointId = config.endpointId;
+    if (endpointId == null || endpointId.isEmpty) {
+      throw HostLinkError(
+        HostLinkErrorKind.other,
+        appL10n.mobileIrohMissingEndpoint,
+        retryable: false,
+        diagnosticCode: HostLinkDiagnosticCode.irohPeerRefused,
+      );
+    }
+    final encodedKey = secrets.irohSecretKey;
+    if (encodedKey.isEmpty) {
+      // Without the identity the host paired, a `hello` can never succeed; the
+      // person has to pair again, which is a fresh descriptor on the computer.
+      throw HostLinkError(
+        HostLinkErrorKind.authFailed,
+        appL10n.mobileIrohNeedRepair,
+        retryable: false,
+        diagnosticCode: HostLinkDiagnosticCode.irohPeerRefused,
+      );
+    }
+    final List<int> keyBytes;
+    try {
+      keyBytes = base64Decode(encodedKey);
+    } on FormatException {
+      throw HostLinkError(
+        HostLinkErrorKind.authFailed,
+        appL10n.mobileIrohNeedRepair,
+        retryable: false,
+        diagnosticCode: HostLinkDiagnosticCode.irohPeerRefused,
+      );
+    }
+
+    final IrohChannel channel;
+    try {
+      channel = await IrohChannel.open(
+        endpointId: endpointId,
+        secretKey: SecretKey.fromBytes(keyBytes),
+        // A stored host is a known peer: `hello`, never a code the person would
+        // have to read off the computer on every reconnect.
+        name: config.name,
+      );
+    } on IrohChannelException catch (e) {
+      throw irohError(e);
+    } on Object catch (e) {
+      throw HostLinkError(
+        HostLinkErrorKind.unreachable,
+        appL10n.remoteErrHostUnreachable,
+        detail: '$e',
+        retryable: true,
+        diagnosticCode: HostLinkDiagnosticCode.irohTunnelFailed,
+      );
+    }
+
+    LocalForwarder? forwarder;
+    try {
+      _emit(HostLinkStatus(HostLinkPhase.connecting, step: HostLinkStep.tunnel));
+      forwarder = await LocalForwarder.bind(channel.openTunnel);
+    } on Object {
+      await channel.close();
+      throw HostLinkError(
+        HostLinkErrorKind.tunnelFailed,
+        appL10n.commonConnectionFailed,
+        retryable: true,
+        diagnosticCode: HostLinkDiagnosticCode.irohTunnelFailed,
+      );
+    }
+    final httpClient = IrohTunnelHttpClient(caCertificatePem: secrets.caPem, tunnelPort: forwarder.port);
+    return _iroh = _IrohTransport(channel: channel, forwarder: forwarder, httpClient: httpClient);
+  }
+
+  Future<void> _closeIroh() async {
+    final transport = _iroh;
+    _iroh = null;
+    await transport?.close();
   }
 
   SecurityContext _securityContext(String pem) =>
@@ -225,11 +362,16 @@ class MobileHostLink implements HostLink {
             last.message,
             detail: [if (last.detail != null) last.detail!, appL10n.remoteRetryCount(_backoff.attempt)].join('\n'),
             retryable: true,
+            diagnosticCode: last.diagnosticCode,
           );
           _fail(error);
           throw error;
         }
         final delay = _backoff.next();
+        // Arm the wait *before* announcing the attempt: a kick that lands in
+        // between would otherwise hit an idle timer and be lost, leaving the
+        // full delay to run out anyway.
+        final wait = _delay.wait(delay);
         _emit(
           HostLinkStatus(
             HostLinkPhase.reconnecting,
@@ -238,7 +380,7 @@ class MobileHostLink implements HostLink {
             nextRetryAt: DateTime.now().add(delay),
           ),
         );
-        await _delay.wait(delay);
+        await wait;
         if (_closed) break;
         try {
           final client = await _connectOnce();
@@ -267,7 +409,8 @@ class MobileHostLink implements HostLink {
     if (_closed) return;
     switch (_status.phase) {
       case HostLinkPhase.reconnecting:
-        _backoff.reset();
+        // Cut the wait short but keep the attempt count: a network that keeps
+        // changing must still run out of attempts instead of retrying forever.
         _delay.skip();
       case HostLinkPhase.failed:
         if (_status.error?.retryable ?? false) retry();
@@ -300,7 +443,27 @@ class MobileHostLink implements HostLink {
     final client = _client;
     _client = null;
     if (client != null) await client.close().catchError((_) {});
+    await _closeIroh();
     await _statuses.close();
     await _clients.close();
+  }
+}
+
+/// The live iroh data plane for one attempt.
+class _IrohTransport {
+  _IrohTransport({required this.channel, required this.forwarder, required this.httpClient});
+
+  final IrohChannel channel;
+  final LocalForwarder forwarder;
+  final HttpClient httpClient;
+
+  int get port => forwarder.port;
+
+  Future<void> close() async {
+    // Order matters: the forwarder pipes sockets into streams this channel owns,
+    // so it goes first, then the client that dials the forwarder.
+    httpClient.close(force: true);
+    await forwarder.close();
+    await channel.close();
   }
 }

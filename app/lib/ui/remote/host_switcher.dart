@@ -150,7 +150,7 @@ class HostSheet extends ConsumerWidget {
                     _HostRow(
                       host: HostRef.mobile(h.id),
                       title: h.name,
-                      subtitle: 'dsh-mobile · ${h.origin}',
+                      subtitle: 'dsh-mobile · ${mobileHostSubtitle(h)}',
                       active: active == HostRef.mobile(h.id),
                       onTap: () => pick(HostRef.mobile(h.id)),
                     ),
