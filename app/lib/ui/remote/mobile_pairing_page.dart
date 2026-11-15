@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
 import '../../remote/mobile/mobile_config.dart';
+import '../../remote/mobile/mobile_link.dart';
 import '../../remote/mobile/mobile_pairing.dart';
 import '../../state/hosts_state.dart';
 import '../common/app_dialog.dart';
@@ -36,12 +37,12 @@ class _MobilePairingPageState extends ConsumerState<MobilePairingPage> {
     if (_busy) return;
     final invite = MobilePairingInvite.tryParse(_text.text);
     if (invite == null) {
-      setState(() => _error = context.l10n.remoteErrHostNotFound);
+      setState(() => _error = context.l10n.mobilePairInvalidLink);
       return;
     }
     final origin = (invite.origin ?? _origin.text).trim();
     if (origin.isEmpty || (!origin.startsWith('https://') && !origin.startsWith('http://'))) {
-      setState(() => _error = context.l10n.remoteErrInvalidServer);
+      setState(() => _error = context.l10n.mobilePairNeedOrigin);
       return;
     }
 
@@ -84,9 +85,11 @@ class _MobilePairingPageState extends ConsumerState<MobilePairingPage> {
       await activateHost(context, ref, HostRef.mobile(config.id));
       if (mounted) Navigator.of(context).pop();
     } on MobilePairingException catch (e) {
-      if (mounted) setState(() => _error = e.code);
+      // Map to the same sentences the link uses, so the page never shows a raw
+      // gateway code like "device_revoked".
+      if (mounted) setState(() => _error = mobileError(e).message);
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() => _error = context.l10n.mobilePairFailed);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -129,7 +132,7 @@ class _MobilePairingPageState extends ConsumerState<MobilePairingPage> {
                 icon: _busy
                     ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
                     : const Icon(AppIcons.qrCode, size: 18),
-                label: Text(l10n.remotePairEntry),
+                label: Text(l10n.mobilePairButton),
               ),
             ],
           ),

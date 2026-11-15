@@ -49,5 +49,9 @@
   "remotePairSwitchFailedTitle": "Paired with {name}",
   "remotePairSwitchFailedBody": "But switching to it didn’t work. Try again, or pick it under Remote hosts.",
   "remotePairDone": "Done",
-  "remotePairErrPinSave": "Paired, but this phone couldn’t store the computer’s fingerprint. Show a new pairing code on the computer and scan it again."
+  "remotePairErrPinSave": "Paired, but this phone couldn’t store the computer’s fingerprint. Show a new pairing code on the computer and scan it again.",
+  "mobilePairButton": "Pair this computer",
+  "mobilePairInvalidLink": "That pairing link or key is incomplete; copy it again",
+  "mobilePairNeedOrigin": "Enter the server address (e.g. https://192.168.1.5:3443)",
+  "mobilePairFailed": "Pairing did not complete"
 }
