@@ -151,7 +151,7 @@ Future<bool> _confirmTrust(BuildContext context, String origin, String instanceI
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${context.l10n.remoteHostKeyFirstConnection(origin, origin)}',
+              context.l10n.remoteHostKeyFirstConnection(origin, origin),
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 14),

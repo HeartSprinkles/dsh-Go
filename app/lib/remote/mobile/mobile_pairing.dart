@@ -213,9 +213,10 @@ class MobilePairingClient {
     if (instanceId != null && responseInstance is String && responseInstance.isNotEmpty && responseInstance != instanceId) {
       throw const MobilePairingException('identity_mismatch');
     }
+    final deviceId = json['deviceId'];
     return MobileSession(
       instanceId: responseInstance is String ? responseInstance : (instanceId ?? ''),
-      deviceId: json['deviceId'] is String ? json['deviceId'] : '',
+      deviceId: deviceId is String ? deviceId : '',
       deviceToken: deviceToken is String ? deviceToken : null,
       sessionToken: sessionToken,
       csrfToken: csrfToken,
