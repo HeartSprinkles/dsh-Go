@@ -1040,6 +1040,13 @@ abstract final class Spots {
     keywords: (l) => l.searchKwRemoteCompactHistory,
   );
 
+  static final addMobileHost = SettingSpot(
+    'add-mobile-host',
+    page: SettingsPageId.remote,
+    title: (l) => l.remotePairAddComputer,
+    keywords: (l) => l.searchKwAddSshHost,
+  );
+
   // 引擎参数 and its pages (drawn from the engine's schema).
   static final subagentDepth = SettingSpot(
     'subagent-depth',
@@ -1164,6 +1171,7 @@ final _rows = <SettingSpot>[
   Spots.engineReset,
   Spots.engineUninstall,
   Spots.addSshHost,
+  Spots.addMobileHost,
   Spots.remoteAutoConnect,
   Spots.remoteCompactHistory,
   Spots.subagentDepth,

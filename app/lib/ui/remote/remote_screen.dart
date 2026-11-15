@@ -150,6 +150,7 @@ class RemoteScreen extends ConsumerWidget {
             SettingsTile(
               icon: AppIcons.add,
               tinted: false,
+              spot: Spots.addMobileHost,
               title: l10n.remotePairAddComputer,
               onTap: () => push(const MobilePairingPage()),
             ),
