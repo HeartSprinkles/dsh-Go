@@ -62,7 +62,9 @@ class InputStoreTest(unittest.TestCase):
         (repo / "runtime").mkdir(parents=True)
         shell = (REPO / "runtime/build-runtime.sh").read_text(encoding="utf-8")
         _, pins = store.shell_inputs(REPO)
-        old = pins["proot-v5.1.107.98.zip"]
+        # Read the key from the table instead of restating the pinned proot
+        # version here: bumping the pin then leaves this test green.
+        old = next(digest for name, digest in pins.items() if name.startswith("proot-"))
         (repo / "runtime/build-runtime.sh").write_text(shell.replace(old, "f" * 64), encoding="utf-8")
         shutil.copytree(REPO / "runtime/locks", repo / "runtime/locks")
         lock = repo / "runtime/locks/pnpm-11.28.5/package-lock.json"
