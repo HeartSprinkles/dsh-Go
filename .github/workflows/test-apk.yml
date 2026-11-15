@@ -1,0 +1,93 @@
+# Builds a dsh-mobile test APK: the patched runtime bundle plus the Flutter app,
+# signed with the debug key, under the `.test` applicationId so it installs
+# alongside the official app.
+#
+# Manual only: this needs the full runtime (rtbuild applies 139 engine patches,
+# installs Node/pnpm/DSH, and packs the rootfs), which is far too heavy for the
+# PR CI path filter. Expect roughly 40-60 minutes.
+name: Test APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: 'ABI flavor'
+        type: choice
+        options: [arm64, x64, all]
+        default: arm64
+      mode:
+        description: 'Build mode (release embeds the runtime bundle)'
+        type: choice
+        options: [release, debug]
+        default: release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.47.7
+  NODE_VERSION: 24.22.1
+  TZ: Asia/Shanghai
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # rtbuild is idempotent and verifies every download against a pinned hash;
+      # the cache just saves the re-download, not correctness.
+      - name: Cache runtime downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            runtime/.cache
+            runtime/.work
+          key: runtime-full-${{ hashFiles('runtime/build-runtime.sh', 'runtime/locks/**', 'runtime/patches/**', 'runtime/lib/rtbuild.py') }}
+
+      - name: Build the runtime bundle
+        run: |
+          # arm64-v8a and x86_64; the app flavors read runtime/out/<abi>.
+          bash runtime/build-runtime.sh
+
+      - name: Build the APK
+        env:
+          FLAVOR: ${{ inputs.flavor }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          bash tooling/build-apk.sh --"$MODE" -f "$FLAVOR"
+
+      - name: Collect the APKs
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          find app/build/app/outputs/flutter-apk -name '*.apk' -exec cp {} "$RUNNER_TEMP/out/" \;
+          ls -lh "$RUNNER_TEMP/out"
+          for apk in "$RUNNER_TEMP/out"/*.apk; do
+            sha256sum "$apk" >> "$RUNNER_TEMP/out/SHA256SUMS"
+          done
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dsh-go-test-apk-${{ inputs.flavor }}-${{ inputs.mode }}
+          path: ${{ runner.temp }}/out/
+          retention-days: 14

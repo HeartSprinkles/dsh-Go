@@ -49,7 +49,10 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.github.ccch1mneyyy.dsh_app"
+        // TEST BUILD: suffixed so this APK installs alongside the official app
+        // (same key, different package). Revert to io.github.ccch1mneyyy.dsh_app
+        // before any real release; res/xml/shortcuts.xml must match this value.
+        applicationId = "io.github.ccch1mneyyy.dsh_app.test"
         // java.nio.file (symlinks while unpacking the rootfs) needs API 26.
         minSdk = 26
         // Target 28 like Termux, so the API 29+ exec restriction on app-private
