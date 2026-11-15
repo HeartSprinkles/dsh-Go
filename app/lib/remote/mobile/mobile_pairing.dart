@@ -167,6 +167,11 @@ class MobilePairingClient {
     try {
       final request = await http.postUrl(Uri.parse('$origin$path'));
       request.headers.contentType = ContentType.json;
+      // The gateway's external-trust gate rejects a browser-shaped request
+      // without an Origin (`assertExternalTrust` then acceptsOrigin(undefined)
+      // fails, answering 403 "forbidden"). dsh_client deliberately sends no
+      // Origin for the local engine, but this gateway needs its own origin.
+      request.headers.set(HttpHeaders.originHeader, _originOf(origin));
       request.write(jsonEncode(body));
       final response = await request.close();
       final status = response.statusCode;
@@ -223,6 +228,14 @@ class MobilePairingClient {
       sessionExpiresAt: DateTime.fromMillisecondsSinceEpoch(sessionExpires),
       deviceExpiresAt: deviceExpires is int ? DateTime.fromMillisecondsSinceEpoch(deviceExpires) : null,
     );
+  }
+
+  /// The gateway's own origin, which its trust gate compares the Origin header
+  /// against (`scheme://host:port`, no path).
+  static String _originOf(String origin) {
+    final uri = Uri.parse(origin);
+    final port = uri.hasPort ? ':${uri.port}' : '';
+    return '${uri.scheme}://${uri.host}$port';
   }
 
   String? _readCode(Map<String, Object?> json) {

@@ -152,7 +152,14 @@ class MobileHostLink implements HostLink {
       Uri.parse(config.origin),
       securityContext: secrets.caPem.isEmpty ? null : _securityContext(secrets.caPem),
       extraCookies: {'dsh_ma_session': session.sessionToken, 'dsh_ma_device': secrets.deviceToken},
-      extraHeaders: {'x-dsh-mobile-csrf': session.csrfToken},
+      // The gateway's external-trust gate refuses a request without Origin on
+      // both /api/* and the /api/remote.mux upgrade (403, not 401). The stock
+      // dsh_client never sends one because the local engine rejects it; this
+      // gateway is the opposite case and wants its own origin on every request.
+      extraHeaders: {
+        'x-dsh-mobile-csrf': session.csrfToken,
+        HttpHeaders.originHeader: _originOf(config.origin),
+      },
     );
     final client = DshClient(connection);
     try {
@@ -181,6 +188,14 @@ class MobileHostLink implements HostLink {
 
   SecurityContext _securityContext(String pem) =>
       SecurityContext(withTrustedRoots: true)..setTrustedCertificatesBytes(utf8.encode(pem));
+
+  /// The gateway's own origin (`scheme://host:port`), which its trust gate
+  /// compares the Origin header against.
+  static String _originOf(String origin) {
+    final uri = Uri.parse(origin);
+    final port = uri.hasPort ? ':${uri.port}' : '';
+    return '${uri.scheme}://${uri.host}$port';
+  }
 
   void _watchMux(DshClient client) {
     unawaited(_muxSub?.cancel());
