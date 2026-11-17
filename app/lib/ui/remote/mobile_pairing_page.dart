@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
+import '../../remote/mobile/iroh/iroh_channel.dart';
 import '../../remote/mobile/iroh/iroh_descriptor.dart';
 import '../../remote/mobile/iroh/iroh_pairing.dart';
 import '../../remote/mobile/mobile_config.dart';
@@ -134,6 +135,8 @@ class _MobilePairingPageState extends ConsumerState<MobilePairingPage> {
       if (!mounted) return;
       await activateHost(context, ref, HostRef.mobile(config.id));
       if (mounted) Navigator.of(context).pop();
+    } on IrohChannelException catch (e) {
+      if (mounted) setState(() => _error = irohError(e).message);
     } on MobilePairingException catch (e) {
       if (mounted) setState(() => _error = mobileError(e).message);
     } on IrohDescriptorException {
