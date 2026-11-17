@@ -64,7 +64,7 @@ class IrohPairingDescriptor {
   String get hostname => '${endpointId.substring(0, 32)}.${endpointId.substring(32)}.iroh.localhost';
 
   /// Whether this descriptor is still inside its validity window.
-  bool isFreshAt(DateTime now) => now.isBefore(expiresAt);
+  bool isFreshAt(DateTime now) => now.isBefore(expiresAt) && expiresAt.difference(now) <= const Duration(minutes: 10);
 
   static final _hexId = RegExp(r'^[a-f0-9]{64}$');
   static final _code = RegExp(r'^[0-9]{6}$');
@@ -86,6 +86,9 @@ class IrohPairingDescriptor {
 
   /// Parses the JSON text the QR code carries.
   static IrohPairingDescriptor decode(String raw) {
+    if (utf8.encode(raw).length > 2200) {
+      throw const IrohDescriptorException('descriptor_too_large');
+    }
     final Object? parsed;
     try {
       parsed = jsonDecode(raw);
@@ -142,6 +145,19 @@ class IrohPairingDescriptor {
       throw const IrohDescriptorException('invalid_ca');
     }
 
+    if (der.isEmpty || der.length > 1536) {
+      throw const IrohDescriptorException('invalid_ca');
+    }
+    final DateTime expiry;
+    try {
+      expiry = DateTime.fromMillisecondsSinceEpoch(expiresAt);
+    } on ArgumentError {
+      throw const IrohDescriptorException('invalid_expiry');
+    }
+    if (expiry.difference(DateTime.now()) > const Duration(minutes: 10)) {
+      throw const IrohDescriptorException('invalid_expiry');
+    }
+
     final descriptor = IrohPairingDescriptor(
       endpointId: endpointId,
       localPort: localPort,
@@ -149,7 +165,7 @@ class IrohPairingDescriptor {
       gatewayToken: gatewayToken,
       caCertificateDer: der,
       instanceId: instanceId,
-      expiresAt: DateTime.fromMillisecondsSinceEpoch(expiresAt),
+      expiresAt: expiry,
     );
 
     // The origin is derived, never taken from the payload: it is what the
@@ -167,5 +183,4 @@ class IrohPairingDescriptor {
 }
 
 /// Lowercase hex SHA-256 of [bytes].
-String sha256Hex(List<int> bytes) =>
-    sha256.convert(bytes).toString();
+String sha256Hex(List<int> bytes) => sha256.convert(bytes).toString();

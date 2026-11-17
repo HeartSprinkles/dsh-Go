@@ -20,12 +20,8 @@ const irohMaxControlLine = 64 * 1024;
 
 /// The handshake message for a new (`pair`, with [code]) or known (`hello`)
 /// peer, as the JSON line the host expects.
-String irohHandshakeLine({required String name, String? code}) => _line({
-  'version': irohWireVersion,
-  'type': code == null ? 'hello' : 'pair',
-  'code': ?code,
-  'name': name,
-});
+String irohHandshakeLine({required String name, String? code}) =>
+    _line({'version': irohWireVersion, 'type': code == null ? 'hello' : 'pair', 'code': ?code, 'name': name});
 
 /// The line that turns a fresh bidirectional stream into a proxy stream.
 String get irohProxyLine => _line({'version': irohWireVersion, 'type': 'proxy'});

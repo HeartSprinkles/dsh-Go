@@ -69,6 +69,11 @@ Future<IrohPairingOutcome> pairOverIroh({
   String deviceLabel = 'DSH Go',
   Duration timeout = const Duration(seconds: 30),
 }) async {
+  // Recheck here after the UI's trust dialog, before loading the native core or
+  // sending either one-time pairing credential.
+  if (!descriptor.isFreshAt(DateTime.now())) {
+    throw const IrohDescriptorException('invalid_expiry');
+  }
   final secret = secretKeyBytes == null ? SecretKey.generate() : SecretKey.fromBytes(secretKeyBytes);
   final channel = await IrohChannel.open(
     endpointId: descriptor.endpointId,
@@ -84,18 +89,12 @@ Future<IrohPairingOutcome> pairOverIroh({
     try {
       final client = MobilePairingClient(
         label: deviceLabel,
-        clientFactory: ({String? trustedPem}) => IrohTunnelHttpClient(
-          caCertificatePem: caDerToPem(descriptor.caCertificateDer),
-          tunnelPort: forwarder.port,
-        ),
+        clientFactory: ({String? trustedPem}) =>
+            IrohTunnelHttpClient(caCertificatePem: caDerToPem(descriptor.caCertificateDer), tunnelPort: forwarder.port),
       );
       // The token is the one-time secret from the descriptor; the host binds the
       // device token it returns to the endpoint id this phone just used.
-      final session = await client.pair(
-        descriptor.origin,
-        descriptor.gatewayToken,
-        instanceId: descriptor.instanceId,
-      );
+      final session = await client.pair(descriptor.origin, descriptor.gatewayToken, instanceId: descriptor.instanceId);
       return IrohPairingOutcome(
         descriptor: descriptor,
         session: session,

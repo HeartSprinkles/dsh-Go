@@ -16,6 +16,7 @@ import 'package:iroh_flutter/iroh_flutter.dart';
 
 import '../../ssh/ssh_transport.dart';
 import 'iroh_wire.dart';
+import 'iroh_send_sink.dart';
 
 export 'iroh_wire.dart' show irohAlpn;
 
@@ -75,7 +76,8 @@ class IrohChannel {
       }
       final connection = await endpoint.connect(addr, irohAlpn.codeUnits).timeout(timeout);
       final channel = IrohChannel._(endpoint, connection);
-      await channel._handshake(code: code, name: name, timeout: timeout);
+      // Bound opening/writing the control stream too, not only reading its reply.
+      await channel._handshake(code: code, name: name, timeout: timeout).timeout(timeout);
       return channel;
     } on Object {
       // The endpoint owns sockets and a relay task; a failed handshake must not
@@ -139,7 +141,14 @@ class _IrohTunnelChannel implements TunnelChannel {
   final SendStream _send;
   final RecvStream _recv;
   final _incoming = StreamController<Uint8List>();
-  late final _sink = _SendSink(_send);
+  late final _sink = IrohSendSink(
+    write: _send.writeAll,
+    finish: _send.finish,
+    onError: (error, stack) {
+      if (!_done && !_incoming.isClosed) _incoming.addError(error, stack);
+      destroy();
+    },
+  );
   bool _done = false;
 
   void _pump() {
@@ -147,13 +156,13 @@ class _IrohTunnelChannel implements TunnelChannel {
       try {
         while (true) {
           final chunk = await _recv.read(64 * 1024);
-          if (chunk == null) break;
+          if (chunk == null || _done) break;
           _incoming.add(chunk);
         }
-      } on Object {
-        // A reset stream is just a closed socket to the caller.
+      } catch (error, stack) {
+        if (!_done && !_incoming.isClosed) _incoming.addError(error, stack);
       } finally {
-        _done = true;
+        // EOF still needs destroy() to reset the other half of the stream.
         await _incoming.close();
       }
     }());
@@ -169,43 +178,9 @@ class _IrohTunnelChannel implements TunnelChannel {
   void destroy() {
     if (_done) return;
     _done = true;
-    unawaited(_send.reset(0));
+    _sink.addError(StateError('iroh tunnel closed'));
+    unawaited(_send.reset(0).catchError((Object _) {}));
+    unawaited(_recv.stop(0).catchError((Object _) {}));
     unawaited(_incoming.close());
   }
-}
-
-class _SendSink implements StreamSink<List<int>> {
-  _SendSink(this._send);
-
-  final SendStream _send;
-
-  @override
-  void add(List<int> data) {
-    // Writes are awaited in order by the QUIC stream itself; chaining keeps the
-    // closure to the sender simple while still surfacing errors to addStream.
-    unawaited(_write(data));
-  }
-
-  Future<void> _write(List<int> data) async {
-    try {
-      await _send.writeAll(data);
-    } on Object {
-      // A dead stream surfaces through `done`; LocalForwarder tears the pair
-      // down from the socket side either way.
-    }
-  }
-
-  @override
-  void addError(Object error, [StackTrace? stackTrace]) {}
-
-  @override
-  Future<void> addStream(Stream<List<int>> stream) => stream.forEach(add);
-
-  @override
-  Future<void> close() async {
-    await _send.finish();
-  }
-
-  @override
-  Future<void> get done => Future<void>.value();
 }

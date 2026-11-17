@@ -105,11 +105,11 @@ dsh-mobile 是一个 DSH 社区插件，在电脑上起一个 **HTTPS 网关**�
 | `localPort` | 1024–65535 |
 | `irohCode` | 6 位数字 |
 | `gatewayToken` | 43 位 base64url |
-| `caCertificate` | base64 DER，其 sha256 必须等于 `instanceId` |
+| `caCertificate` | 非空 base64 DER，解码后 ≤1536 字节，其 sha256 必须等于 `instanceId` |
 | `expiresAt` | 未来时间，且不超过 10 分钟 |
 | 整体 | ≤ 2200 字节 |
 
-失败原因串（`IrohDescriptorException.reason`）：`not_json`、`not_object`、`unexpected_fields`、`unsupported_descriptor`、`invalid_endpoint`、`invalid_port`、`invalid_code`、`invalid_token`、`invalid_instance`、`invalid_expiry`、`invalid_ca`、`invalid_origin`、`ca_fingerprint_mismatch`。
+失败原因串（`IrohDescriptorException.reason`）：`descriptor_too_large`、`not_json`、`not_object`、`unexpected_fields`、`unsupported_descriptor`、`invalid_endpoint`、`invalid_port`、`invalid_code`、`invalid_token`、`invalid_instance`、`invalid_expiry`、`invalid_ca`、`invalid_origin`、`ca_fingerprint_mismatch`。
 
 ### 7.3 线路协议
 
@@ -124,7 +124,13 @@ ALPN `dsh-mobile-iroh/0`，线路版本 1，控制行是单行 JSON（上限 64 
 
 1. `IrohChannel.open(endpointId, secretKey, name)` → `Endpoint.bind` + `connect` + 握手。
 2. `LocalForwarder.bind(channel.openTunnel)` 在 `127.0.0.1` 上开一个临时端口，每条到该端口的 TCP 连接对应一条 iroh 流。
-3. `IrohTunnelHttpClient` 把 `DshConnection` 的 `connectionFactory` 指向那个本地端口，并把 `iot.localhost` 名字保留为 HTTP Host/SNI，同时固定描述里的 CA。
+3. `IrohTunnelHttpClient` 把 `DshConnection` 的 `connectionFactory` 指向那个本地端口，并把 `iroh.localhost` 名字保留为 HTTP Host/SNI，仅信任描述里的 CA（不加载系统根证书）；缺失 CA 时拒绝连接。
 4. 之后与 §2 完全一致：`native-renew` → `dsh_ma_session`/`dsh_ma_device` Cookie + `x-dsh-mobile-csrf` + `Origin` → `/api/remote.mux`。
 
 因为 TLS 在电脑上终止，iroh 只提供可达性与端到端加密的传输层；应用层认证、CSRF、CA 固定都不变，失败时也不会降级到明文。
+
+### 7.5 保存配置与生命周期边界
+
+每次连接使用同一份配置快照。在发送设备令牌前，重新校验派生 origin、端点、端口及 SecretStore CA 的 SHA-256 与 instanceId/caFingerprint 的绑定；已有 iroh 私钥但配置被改为 LAN 时拒绝连接。损坏或丢失 CA/私钥必须重新配对，不回退到系统根证书。信任确认后还会重新检查描述有效期。
+
+同一链接的 open/reconnect 是 single-flight；close 会唤醒等待 secrets/renew/mux 的任务，等待尚未结束的原生拨号并清理晚到资源，构造中途失败也释放 forwarder 和 endpoint。QUIC 的发送队列复制生产者缓冲区、按序写入，所有写入结束后才发送 FIN；写入失败会传播到 sink.done 并关闭隧道，而不是静默丢包。

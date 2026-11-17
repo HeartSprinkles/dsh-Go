@@ -6,7 +6,7 @@
 ///    `<half>.<half>.iroh.localhost:<localPort>`, so the request has to present
 ///    that authority while the bytes travel over `127.0.0.1:<forwarded port>`;
 ///  * the gateway serves its own self-signed CA, so the client trusts exactly
-///    that certificate on top of the system roots.
+///    that certificate alone, without the system roots.
 ///
 /// A [connectionFactory] override resolves both without a certificate bypass:
 /// the URL keeps the gateway's name (so TLS SNI and hostname verification use
@@ -138,12 +138,13 @@ class IrohTunnelHttpClient implements HttpClient {
 /// Builds the redirecting client. Kept separate so a test can inspect the two
 /// hooks without an iroh endpoint.
 HttpClient buildIrohHttpClient(String caCertificatePem, int tunnelPort) {
-  final context = SecurityContext(withTrustedRoots: true);
-  // Adding the gateway CA to the system roots keeps ordinary HTTPS working while
-  // making the gateway's leaf verifiable — no badCertificateCallback bypass.
-  if (caCertificatePem.isNotEmpty) {
-    context.setTrustedCertificatesBytes(utf8.encode(caCertificatePem));
+  if (caCertificatePem.trim().isEmpty) {
+    throw ArgumentError.value(caCertificatePem, 'caCertificatePem', 'A pinned gateway CA is required');
   }
+  // This client is dedicated to one gateway, not general-purpose HTTPS. Trust
+  // only its paired CA, never the platform's unrelated public roots.
+  final context = SecurityContext(withTrustedRoots: false);
+  context.setTrustedCertificatesBytes(utf8.encode(caCertificatePem));
   final client = HttpClient(context: context);
   // The URI keeps the gateway's own name so TLS checks it; only the TCP socket
   // is redirected, which is what makes the tunnel transparent.

@@ -18,29 +18,41 @@ final _caDer = List<int>.generate(64, (i) => i);
 /// An endpoint id and its derived `iroh.localhost` origin.
 final _endpointId = 'a' * 64;
 
-IrohPairingDescriptor _descriptor({String? instanceId, DateTime? expiresAt}) =>
-    IrohPairingDescriptor(
-      endpointId: _endpointId,
-      localPort: 25443,
-      irohCode: '012345',
-      gatewayToken: 'A' * 43,
-      caCertificateDer: _caDer,
-      instanceId: instanceId ?? sha256Hex(_caDer),
-      expiresAt: expiresAt ?? DateTime.now().add(const Duration(minutes: 5)),
-    );
+IrohPairingDescriptor _descriptor({String? instanceId, DateTime? expiresAt}) => IrohPairingDescriptor(
+  endpointId: _endpointId,
+  localPort: 25443,
+  irohCode: '012345',
+  gatewayToken: 'A' * 43,
+  caCertificateDer: _caDer,
+  instanceId: instanceId ?? sha256Hex(_caDer),
+  expiresAt: expiresAt ?? DateTime.now().add(const Duration(minutes: 5)),
+);
 
-MobileSession _session({required String instanceId, String? deviceToken = 'device-token', String deviceId = 'device-1'}) =>
-    MobileSession(
-      instanceId: instanceId,
-      deviceId: deviceId,
-      deviceToken: deviceToken,
-      sessionToken: 'session',
-      csrfToken: 'csrf',
-      sessionExpiresAt: DateTime.fromMillisecondsSinceEpoch(1800000000000),
-      deviceExpiresAt: DateTime.fromMillisecondsSinceEpoch(1900000000000),
-    );
+MobileSession _session({
+  required String instanceId,
+  String? deviceToken = 'device-token',
+  String deviceId = 'device-1',
+}) => MobileSession(
+  instanceId: instanceId,
+  deviceId: deviceId,
+  deviceToken: deviceToken,
+  sessionToken: 'session',
+  csrfToken: 'csrf',
+  sessionExpiresAt: DateTime.fromMillisecondsSinceEpoch(1800000000000),
+  deviceExpiresAt: DateTime.fromMillisecondsSinceEpoch(1900000000000),
+);
 
 void main() {
+  test('expired descriptor is rejected before touching the native runtime', () async {
+    await expectLater(
+      pairOverIroh(
+        descriptor: _descriptor(expiresAt: DateTime.now().subtract(const Duration(seconds: 1))),
+        secretKeyBytes: null,
+      ),
+      throwsA(isA<IrohDescriptorException>()),
+    );
+  });
+
   group('IrohPairingOutcome', () {
     final descriptor = _descriptor();
     final keyBytes = List<int>.generate(32, (i) => i);
@@ -93,7 +105,10 @@ void main() {
       );
       expect(anonymous.toSecrets().deviceToken, '');
       expect(anonymous.toConfig(id: 'mobile-1', name: 'n').deviceId, isNull);
-      expect(anonymous.toConfig(id: 'mobile-1', name: 'n').deviceExpiresAt, DateTime.fromMillisecondsSinceEpoch(1900000000000));
+      expect(
+        anonymous.toConfig(id: 'mobile-1', name: 'n').deviceExpiresAt,
+        DateTime.fromMillisecondsSinceEpoch(1900000000000),
+      );
     });
 
     test('the outcome config round-trips through JSON like any saved host', () {

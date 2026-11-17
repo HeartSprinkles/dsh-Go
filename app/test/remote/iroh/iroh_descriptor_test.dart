@@ -37,9 +37,7 @@ Map<String, Object?> _valid({
   };
 }
 
-Matcher _rejects(String reason) => throwsA(
-  isA<IrohDescriptorException>().having((e) => e.reason, 'reason', reason),
-);
+Matcher _rejects(String reason) => throwsA(isA<IrohDescriptorException>().having((e) => e.reason, 'reason', reason));
 
 void main() {
   group('IrohPairingDescriptor.decode', () {
@@ -57,23 +55,15 @@ void main() {
 
     test('splits the endpoint id in half for the gateway hostname', () {
       final id = '0123456789abcdef' * 4;
-      final descriptor = IrohPairingDescriptor.decode(
-        jsonEncode(_valid(endpointId: id)),
-      );
+      final descriptor = IrohPairingDescriptor.decode(jsonEncode(_valid(endpointId: id)));
 
-      expect(
-        descriptor.hostname,
-        '0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef.iroh.localhost',
-      );
+      expect(descriptor.hostname, '0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef.iroh.localhost');
     });
 
     // The plugin compares the key set for equality, so an extra field means a
     // different producer and cannot be ignored.
     test('rejects an extra field', () {
-      expect(
-        () => IrohPairingDescriptor.decode(jsonEncode({..._valid(), 'extra': 1})),
-        _rejects('unexpected_fields'),
-      );
+      expect(() => IrohPairingDescriptor.decode(jsonEncode({..._valid(), 'extra': 1})), _rejects('unexpected_fields'));
     });
 
     test('rejects a missing field', () {
@@ -93,10 +83,7 @@ void main() {
 
     test('rejects a CA whose hash is not the instance id', () {
       final value = _valid(instanceId: 'b' * 64);
-      expect(
-        () => IrohPairingDescriptor.decode(jsonEncode(value)),
-        _rejects('ca_fingerprint_mismatch'),
-      );
+      expect(() => IrohPairingDescriptor.decode(jsonEncode(value)), _rejects('ca_fingerprint_mismatch'));
     });
 
     test('rejects a malformed token, code, endpoint id or port', () {
@@ -124,6 +111,17 @@ void main() {
         () => IrohPairingDescriptor.decode(jsonEncode({..._valid(), 'version': 2})),
         _rejects('unsupported_descriptor'),
       );
+    });
+
+    test('bounds descriptor bytes, CA size and timestamp range', () {
+      expect(() => IrohPairingDescriptor.decode(' ' * 2201), _rejects('descriptor_too_large'));
+      expect(() => IrohPairingDescriptor.decode(jsonEncode(_valid(caBase64: ''))), _rejects('invalid_ca'));
+      for (final expiry in [DateTime.now().add(const Duration(minutes: 11)).millisecondsSinceEpoch, 9000000000000000]) {
+        expect(
+          () => IrohPairingDescriptor.decode(jsonEncode({..._valid(), 'expiresAt': expiry})),
+          _rejects('invalid_expiry'),
+        );
+      }
     });
 
     test('rejects non-JSON input and non-object JSON', () {
