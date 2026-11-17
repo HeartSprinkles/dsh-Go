@@ -34,6 +34,18 @@ class IrohChannelException implements Exception {
   String toString() => detail == null ? 'IrohChannelException($reason)' : 'IrohChannelException($reason: $detail)';
 }
 
+/// Maps a failed dial onto [IrohChannelException].
+///
+/// A native dial failure (no route, QUIC timeout, refused) arrives as the
+/// plugin's own exception type. Re-throwing those as this class's type keeps the
+/// caller's error mapping to one shape, so the user sees the iroh cause instead
+/// of the page's generic failure text.
+IrohChannelException irohDialFailure(Object error) {
+  if (error is IrohChannelException) return error;
+  if (error is TimeoutException) return const IrohChannelException('connect_timeout');
+  return IrohChannelException('connect_failed', detail: '$error');
+}
+
 /// One authenticated iroh connection to a host, kept open for the link's life.
 ///
 /// Reconnecting is the caller's job: when the connection dies, [open] throws and
@@ -79,11 +91,11 @@ class IrohChannel {
       // Bound opening/writing the control stream too, not only reading its reply.
       await channel._handshake(code: code, name: name, timeout: timeout).timeout(timeout);
       return channel;
-    } on Object {
+    } on Object catch (error) {
       // The endpoint owns sockets and a relay task; a failed handshake must not
       // leave them running behind a dead channel.
       await endpoint.close();
-      rethrow;
+      throw irohDialFailure(error);
     }
   }
 

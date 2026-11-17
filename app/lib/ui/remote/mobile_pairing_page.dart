@@ -136,7 +136,13 @@ class _MobilePairingPageState extends ConsumerState<MobilePairingPage> {
       await activateHost(context, ref, HostRef.mobile(config.id));
       if (mounted) Navigator.of(context).pop();
     } on IrohChannelException catch (e) {
-      if (mounted) setState(() => _error = irohError(e).message);
+      // Keep the reason visible: `irohError` already turns it into a sentence,
+      // and the raw text is the only clue a LAN-blocked or QUIC-blocked network
+      // leaves behind.
+      if (mounted) {
+        final error = irohError(e);
+        setState(() => _error = error.detail == null ? error.message : context.l10n.remoteErrorDetail(error.message, error.detail!));
+      }
     } on MobilePairingException catch (e) {
       if (mounted) setState(() => _error = mobileError(e).message);
     } on IrohDescriptorException {
