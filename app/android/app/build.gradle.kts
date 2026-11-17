@@ -19,6 +19,11 @@ val hasWholeReleaseKey = listOf("storeFile", "keyAlias").all { !keyProps.getProp
     listOf("storePassword", "keyPassword").all { !keyProps.getProperty(it).isNullOrEmpty() } &&
     file(keyProps.getProperty("storeFile")).exists()
 
+// Opt-in for automated prereleases: never silently sign with an ephemeral debug key.
+if (System.getenv("DSH_REQUIRE_RELEASE_SIGNING") == "1" && !hasWholeReleaseKey) {
+    throw GradleException("Prerelease signing requires a complete persistent key.properties")
+}
+
 // Per-ABI runtime bundles produced by runtime/build-runtime.sh.
 val runtimeOut = rootProject.file("../../runtime/out")
 // libtawcroot.so for the opt-in tawcroot launch method (runtime/tawcroot/build.py; missing = unavailable).
@@ -49,9 +54,8 @@ android {
     }
 
     defaultConfig {
-        // TEST BUILD: suffixed so this APK installs alongside the official app
-        // (same key, different package). Revert to io.github.ccch1mneyyy.dsh_app
-        // before any real release; res/xml/shortcuts.xml must match this value.
+        // Persistent fork test identity; intentionally distinct from the official app.
+        // Keep res/xml/shortcuts.xml in sync when changing this applicationId.
         applicationId = "io.github.ccch1mneyyy.dsh_app.test"
         // java.nio.file (symlinks while unpacking the rootfs) needs API 26.
         minSdk = 26

@@ -1,5 +1,5 @@
 # Builds a dsh-mobile test APK: the patched runtime bundle plus the Flutter app,
-# signed with the debug key, under the `.test` applicationId so it installs
+# signed with the persistent prerelease key, under the `.test` applicationId so it installs
 # alongside the official app.
 #
 # Manual only: this needs the full runtime (rtbuild applies 139 engine patches,
@@ -79,12 +79,53 @@ jobs:
           # arm64-v8a and x86_64; the app flavors read runtime/out/<abi>.
           bash runtime/build-runtime.sh
 
+      - name: Restore persistent prerelease signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.PRERELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.PRERELEASE_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.PRERELEASE_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.PRERELEASE_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PY'
+          import os, base64, pathlib
+          required = ['KEYSTORE_BASE64', 'STORE_PASSWORD', 'KEY_PASSWORD', 'KEY_ALIAS']
+          if any(not os.environ.get(k) for k in required):
+              raise SystemExit('Persistent prerelease signing secrets are missing')
+          key = pathlib.Path(os.environ['RUNNER_TEMP']) / 'prerelease-signing.p12'
+          key.write_bytes(base64.b64decode(os.environ['KEYSTORE_BASE64'], validate=True))
+          props = {'storeFile': str(key), 'storePassword': os.environ['STORE_PASSWORD'],
+                   'keyPassword': os.environ['KEY_PASSWORD'], 'keyAlias': os.environ['KEY_ALIAS']}
+          def esc(value):
+              return value.replace('\\', '\\\\').replace(':', '\\:').replace('=', '\\=')
+          pathlib.Path('app/android/key.properties').write_text(''.join(f'{k}={esc(v)}\n' for k, v in props.items()))
+          PY
+
       - name: Build the APK
         env:
           FLAVOR: ${{ inputs.flavor }}
           MODE: ${{ inputs.mode }}
+          DSH_REQUIRE_RELEASE_SIGNING: "1"
         run: |
           bash tooling/build-apk.sh --"$MODE" -f "$FLAVOR"
+
+      - name: Verify package and persistent signing certificate
+        run: |
+          set -euo pipefail
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          expected=bf4b5f220e21feed52a10d531aba59577373ca055fcad7fe6a1ab90294812bbf
+          for apk in app/build/app/outputs/flutter-apk/*.apk; do
+            "$tools/aapt2" dump badging "$apk" > "$RUNNER_TEMP/badging.txt"
+            grep -q "package: name='io.github.ccch1mneyyy.dsh_app.test'" "$RUNNER_TEMP/badging.txt"
+            "$tools/apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/signature.txt"
+            grep -qi "certificate SHA-256 digest: $expected" "$RUNNER_TEMP/signature.txt"
+            cat "$RUNNER_TEMP/signature.txt"
+          done
+
+      - name: Remove signing files
+        if: always()
+        run: rm -f app/android/key.properties "$RUNNER_TEMP/prerelease-signing.p12"
 
       - name: Collect the APKs
         run: |

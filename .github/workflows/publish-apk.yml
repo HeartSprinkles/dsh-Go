@@ -73,6 +73,15 @@ jobs:
             }
           done
 
+      - name: Verify persistent prerelease certificate
+        run: |
+          set -euo pipefail
+          signer=$(ls -1d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/build-tools/*/apksigner | sort -V | tail -n 1)
+          for apk in dist/*.apk; do
+            "$signer" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/signature.txt"
+            grep -qi 'certificate SHA-256 digest: bf4b5f220e21feed52a10d531aba59577373ca055fcad7fe6a1ab90294812bbf' "$RUNNER_TEMP/signature.txt"
+          done
+
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,7 +92,7 @@ jobs:
           set -euo pipefail
           notes="Test build from run $RUN_ID.
           Built with the .test applicationId (io.github.ccch1mneyyy.dsh_app.test), so it
-          installs alongside the official app. Debug-signed: not for distribution."
+          installs alongside the official app. Signed with the persistent fork prerelease key (not the upstream release key)."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/*.apk dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
           else
