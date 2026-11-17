@@ -54,7 +54,9 @@ void main() {
       expect(MobilePairingInvite.tryParse('https://host/mobile-access/pair'), isNull);
       expect(MobilePairingInvite.tryParse('https://host/mobile-access/pair#token=only'), isNull);
       expect(MobilePairingInvite.tryParse('https://host/mobile-access/pair#instance=only'), isNull);
-      expect(MobilePairingInvite.tryParse('dsh1.too.few'), isNull);
+      expect(MobilePairingInvite.tryParse('dsh1..pair-token-3'), isNull);
+      expect(MobilePairingInvite.tryParse('dsh1.abc123def456.'), isNull);
+      expect(MobilePairingInvite.tryParse('key=dsh2..pair-token-3'), isNull);
       expect(MobilePairingInvite.tryParse('dsh3.a.b.c'), isNull);
     });
   });
@@ -90,6 +92,55 @@ void main() {
       expect(renamed.origin, full.origin);
       expect(renamed.name, '新名字');
       expect(renamed.instanceId, full.instanceId);
+    });
+
+    test('an iroh host round-trips its transport and endpoint id', () {
+      final iroh = full.copyWith(
+        transport: MobileTransport.iroh,
+        endpointId: 'a' * 64,
+        localPort: 25443,
+        origin: 'https://${'a' * 32}.${'b' * 32}.iroh.localhost:25443',
+      );
+      final back = MobileHostConfig.fromJson(jsonDecode(jsonEncode(iroh.toJson())))!;
+      expect(back, iroh);
+      expect(back.isIroh, isTrue);
+      expect(back.endpointId, 'a' * 64);
+      expect(back.localPort, 25443);
+    });
+
+    test('a LAN host writes no transport field, and old entries read as LAN', () {
+      expect(full.toJson().keys, isNot(contains('transport')));
+      expect(full.toJson().keys, isNot(contains('endpointId')));
+      final legacy = jsonDecode(jsonEncode({'id': 'mobile-old', 'name': '电脑', 'origin': 'https://10.0.0.5:3443'}));
+      final parsed = MobileHostConfig.fromJson(legacy)!;
+      expect(parsed.transport, MobileTransport.lan);
+      expect(parsed.isIroh, isFalse);
+      expect(parsed.endpointId, isNull);
+    });
+
+    test('an iroh entry without an endpoint id is dropped, not kept as unopenable', () {
+      expect(
+        MobileHostConfig.fromJson({
+          'id': 'mobile-x',
+          'name': 'n',
+          'origin': 'https://a.example.com',
+          'transport': 'iroh',
+        }),
+        isNull,
+      );
+      expect(
+        MobileHostConfig.fromJson({'id': 'i', 'name': 'n', 'origin': 'o', 'transport': 'quic'}),
+        isNotNull,
+        reason: 'an unknown transport falls back to LAN',
+      );
+    });
+
+    test('the tile subtitle tells iroh from LAN', () {
+      expect(mobileHostSubtitle(full), full.origin);
+      expect(
+        mobileHostSubtitle(full.copyWith(transport: MobileTransport.iroh, endpointId: 'a' * 64)),
+        'iroh · ${full.origin}',
+      );
     });
 
     test('a host never serializes its device token or CA', () {
@@ -150,6 +201,40 @@ void main() {
       await hosts.saveMobile(config, secrets: const MobileSecrets(deviceToken: 'tok', caPem: ''));
       expect(secrets.values.containsKey(MobileSecrets.caPemKey('mobile-h2')), isFalse);
       expect((await hosts.loadMobileSecrets('mobile-h2')).caPem, '');
+    });
+
+    test('the iroh identity is a secret too: stored, replaced and removed', () async {
+      final c = container();
+      final hosts = await ready(c);
+      final config = MobileHostConfig(
+        id: 'mobile-i1',
+        name: '电脑',
+        origin: 'https://a.example.com',
+        transport: MobileTransport.iroh,
+        endpointId: 'b' * 64,
+        localPort: 25443,
+      );
+
+      await hosts.saveMobile(
+        config,
+        secrets: const MobileSecrets(deviceToken: 'tok', caPem: 'PEM', irohSecretKey: 'key-1'),
+      );
+      expect(secrets.values[MobileSecrets.irohSecretKeyKey('mobile-i1')], 'key-1');
+      expect((await hosts.loadMobileSecrets('mobile-i1')).irohSecretKey, 'key-1');
+
+      // A re-pair writes the new key; an empty one drops the entry.
+      await hosts.saveMobile(
+        config,
+        secrets: const MobileSecrets(deviceToken: 'tok', caPem: 'PEM', irohSecretKey: ''),
+      );
+      expect(secrets.values.containsKey(MobileSecrets.irohSecretKeyKey('mobile-i1')), isFalse);
+
+      await hosts.saveMobile(
+        config,
+        secrets: const MobileSecrets(deviceToken: 'tok', caPem: 'PEM', irohSecretKey: 'key-2'),
+      );
+      await hosts.removeMobile('mobile-i1');
+      expect(secrets.values.containsKey(MobileSecrets.irohSecretKeyKey('mobile-i1')), isFalse);
     });
 
     test('re-saving the same id replaces instead of appending', () async {

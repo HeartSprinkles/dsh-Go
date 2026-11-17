@@ -88,5 +88,12 @@
   "mobilePairButton": "配对这台电脑",
   "mobilePairInvalidLink": "配对链接或密钥不完整，请重新复制",
   "mobilePairNeedOrigin": "填写服务器地址（如 https://192.168.1.5:3443）",
-  "mobilePairFailed": "配对没有完成"
+  "mobilePairFailed": "配对没有完成",
+  "mobilePairIrohDescriptorHint": "电脑上显示的 iroh 配对描述",
+  "mobilePairIrohInvalid": "配对描述格式不对，请重新复制",
+  "mobilePairIrohStale": "配对描述已过期，请在电脑上重新生成",
+  "mobileIrohMissingEndpoint": "这台 iroh 主机缺少端点 ID，请重新配对",
+  "mobileIrohNeedRepair": "这台手机的 iroh 身份已丢失，请和电脑重新配对",
+  "mobileTransportIroh": "iroh",
+  "mobileTransportLan": "局域网"
 }

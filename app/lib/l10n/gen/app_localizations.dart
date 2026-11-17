@@ -29018,6 +29018,72 @@ abstract class L10n {
   /// **'已经配对，但没能在手机上保存这台电脑的指纹。请在电脑上重新生成二维码，再扫一次'**
   String get remotePairErrPinSave;
 
+  /// No description provided for @mobilePairButton.
+  ///
+  /// In zh, this message translates to:
+  /// **'配对这台电脑'**
+  String get mobilePairButton;
+
+  /// No description provided for @mobilePairInvalidLink.
+  ///
+  /// In zh, this message translates to:
+  /// **'配对链接或密钥不完整，请重新复制'**
+  String get mobilePairInvalidLink;
+
+  /// No description provided for @mobilePairNeedOrigin.
+  ///
+  /// In zh, this message translates to:
+  /// **'填写服务器地址（如 https://192.168.1.5:3443）'**
+  String get mobilePairNeedOrigin;
+
+  /// No description provided for @mobilePairFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'配对没有完成'**
+  String get mobilePairFailed;
+
+  /// No description provided for @mobilePairIrohDescriptorHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'电脑上显示的 iroh 配对描述'**
+  String get mobilePairIrohDescriptorHint;
+
+  /// No description provided for @mobilePairIrohInvalid.
+  ///
+  /// In zh, this message translates to:
+  /// **'配对描述格式不对，请重新复制'**
+  String get mobilePairIrohInvalid;
+
+  /// No description provided for @mobilePairIrohStale.
+  ///
+  /// In zh, this message translates to:
+  /// **'配对描述已过期，请在电脑上重新生成'**
+  String get mobilePairIrohStale;
+
+  /// No description provided for @mobileIrohMissingEndpoint.
+  ///
+  /// In zh, this message translates to:
+  /// **'这台 iroh 主机缺少端点 ID，请重新配对'**
+  String get mobileIrohMissingEndpoint;
+
+  /// No description provided for @mobileIrohNeedRepair.
+  ///
+  /// In zh, this message translates to:
+  /// **'这台手机的 iroh 身份已丢失，请和电脑重新配对'**
+  String get mobileIrohNeedRepair;
+
+  /// No description provided for @mobileTransportIroh.
+  ///
+  /// In zh, this message translates to:
+  /// **'iroh'**
+  String get mobileTransportIroh;
+
+  /// No description provided for @mobileTransportLan.
+  ///
+  /// In zh, this message translates to:
+  /// **'局域网'**
+  String get mobileTransportLan;
+
   /// No description provided for @stateWorkspaceFilesHint.
   ///
   /// In zh, this message translates to:

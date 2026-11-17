@@ -15880,6 +15880,39 @@ class L10nZh extends L10n {
   String get remotePairErrPinSave => '已经配对，但没能在手机上保存这台电脑的指纹。请在电脑上重新生成二维码，再扫一次';
 
   @override
+  String get mobilePairButton => '配对这台电脑';
+
+  @override
+  String get mobilePairInvalidLink => '配对链接或密钥不完整，请重新复制';
+
+  @override
+  String get mobilePairNeedOrigin => '填写服务器地址（如 https://192.168.1.5:3443）';
+
+  @override
+  String get mobilePairFailed => '配对没有完成';
+
+  @override
+  String get mobilePairIrohDescriptorHint => '电脑上显示的 iroh 配对描述';
+
+  @override
+  String get mobilePairIrohInvalid => '配对描述格式不对，请重新复制';
+
+  @override
+  String get mobilePairIrohStale => '配对描述已过期，请在电脑上重新生成';
+
+  @override
+  String get mobileIrohMissingEndpoint => '这台 iroh 主机缺少端点 ID，请重新配对';
+
+  @override
+  String get mobileIrohNeedRepair => '这台手机的 iroh 身份已丢失，请和电脑重新配对';
+
+  @override
+  String get mobileTransportIroh => 'iroh';
+
+  @override
+  String get mobileTransportLan => '局域网';
+
+  @override
   String get stateWorkspaceFilesHint => '已上传到当前工作区的文件：';
 
   @override

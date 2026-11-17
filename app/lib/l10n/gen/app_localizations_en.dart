@@ -16712,6 +16712,39 @@ class L10nEn extends L10n {
       'Paired, but this phone couldn’t store the computer’s fingerprint. Show a new pairing code on the computer and scan it again.';
 
   @override
+  String get mobilePairButton => 'Pair this computer';
+
+  @override
+  String get mobilePairInvalidLink => 'That pairing link or key is incomplete; copy it again';
+
+  @override
+  String get mobilePairNeedOrigin => 'Enter the server address (e.g. https://192.168.1.5:3443)';
+
+  @override
+  String get mobilePairFailed => 'Pairing did not complete';
+
+  @override
+  String get mobilePairIrohDescriptorHint => 'The iroh pairing description the computer shows';
+
+  @override
+  String get mobilePairIrohInvalid => 'That pairing description is not valid; copy it again';
+
+  @override
+  String get mobilePairIrohStale => 'That pairing description has expired. Show a new one on the computer.';
+
+  @override
+  String get mobileIrohMissingEndpoint => 'This iroh host is missing its endpoint id. Pair it again.';
+
+  @override
+  String get mobileIrohNeedRepair => 'This phone\'s iroh identity is gone. Pair it with the computer again.';
+
+  @override
+  String get mobileTransportIroh => 'iroh';
+
+  @override
+  String get mobileTransportLan => 'LAN';
+
+  @override
   String get stateWorkspaceFilesHint => 'Files uploaded to the current workspace:';
 
   @override

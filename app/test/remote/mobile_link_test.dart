@@ -5,7 +5,7 @@
 import 'dart:async';
 
 import 'package:dsh_app/remote/link_status.dart';
-import 'package:dsh_app/remote/mobile/mobile_config.dart';
+import 'package:dsh_app/remote/mobile/iroh/iroh_channel.dart';
 import 'package:dsh_app/remote/mobile/mobile_link.dart';
 import 'package:dsh_app/remote/mobile/mobile_pairing.dart';
 import 'package:dsh_app/remote/secret_store.dart';
@@ -21,27 +21,16 @@ const _host = MobileHostConfig(id: 'mobile-1', name: '电脑', origin: 'https://
 
 /// A pairing client whose renew fails with a chosen code, without a socket.
 class _FailingPairing extends MobilePairingClient {
-  _FailingPairing(this.code, {this.sessions = 0});
+  _FailingPairing(this.code);
 
   final String code;
 
-  /// How many renew calls succeed before the failure kicks in; used to check
-  /// that a transient failure is retried.
-  final int sessions;
   int renews = 0;
 
   @override
   Future<MobileSession> renew(String origin, String deviceToken, {String? instanceId, String? trustedPem}) async {
     renews++;
-    if (renews > sessions) throw MobilePairingException(code);
-    return MobileSession(
-      instanceId: instanceId ?? 'instance',
-      deviceId: 'device',
-      deviceToken: null,
-      sessionToken: 'session-$renews',
-      csrfToken: 'csrf-$renews',
-      sessionExpiresAt: DateTime.now().add(const Duration(hours: 1)),
-    );
+    throw MobilePairingException(code);
   }
 }
 
@@ -76,6 +65,34 @@ void main() {
       expect(unknown.retryable, isTrue);
       expect(unknown.kind, HostLinkErrorKind.unreachable);
       expect(unknown.detail, 'network');
+    });
+  });
+
+  group('irohError', () {
+    test('a refused or unpaired peer asks for a re-pair instead of retrying', () {
+      for (final reason in ['handshake_refused', 'pair-fail', 'not_paired', 'unknown_endpoint', 'endpoint_mismatch', 'bad_handshake']) {
+        final error = irohError(IrohChannelException(reason));
+        expect(error.retryable, isFalse, reason: reason);
+        expect(error.kind, HostLinkErrorKind.authFailed, reason: reason);
+        expect(error.diagnosticCode, HostLinkDiagnosticCode.irohPeerRefused, reason: reason);
+      }
+    });
+
+    test('a tunnel that cannot be established right now retries', () {
+      for (final reason in ['connect_timeout', 'endpoint_closed', 'relay_unreachable']) {
+        final error = irohError(IrohChannelException(reason));
+        expect(error.retryable, isTrue, reason: reason);
+        expect(error.kind, HostLinkErrorKind.unreachable, reason: reason);
+        expect(error.diagnosticCode, HostLinkDiagnosticCode.irohTunnelFailed, reason: reason);
+      }
+    });
+
+    test('the detail keeps both the reason and what the transport said', () {
+      expect(irohError(IrohChannelException('connect_timeout')).detail, 'connect_timeout');
+      expect(
+        irohError(IrohChannelException('connect_timeout', detail: 'no path')).detail,
+        'connect_timeout: no path',
+      );
     });
   });
 
@@ -142,17 +159,22 @@ void main() {
         loadSecrets: () async => const MobileSecrets(deviceToken: 'tok', caPem: ''),
         pairing: pairing,
         kicks: const Stream.empty(),
-        // A long first wait: only a kick gets past it quickly.
-        backoff: Backoff(initial: const Duration(seconds: 30), maxAttempts: 2),
+        // A long first wait: only a kick gets past it quickly. Room for more
+        // than one attempt, because a kick consumes an attempt rather than
+        // rewinding the counter.
+        backoff: Backoff(initial: const Duration(seconds: 30), maxAttempts: 8),
       );
       addTearDown(l.close);
 
       unawaited(l.open().then((_) {}, onError: (_) {}));
       await nextStatus(l, (s) => s.phase == HostLinkPhase.reconnecting, what: 'reconnecting');
+      // Subscribe before kicking: the skip releases the wait immediately, so a
+      // listener attached afterwards would miss the second attempt.
+      final second = nextStatus(l, (s) => s.phase == HostLinkPhase.reconnecting && s.attempt >= 2, what: 'second attempt');
       l.kick();
 
       // The skipped wait is observable as a second attempt well under 30 s.
-      await nextStatus(l, (s) => s.phase == HostLinkPhase.reconnecting && s.attempt >= 2, what: 'second attempt');
+      await second;
       expect(pairing.renews, greaterThan(1));
     });
   });
@@ -204,8 +226,15 @@ void main() {
       await hosts.ready;
       await hosts.saveMobile(_host, secrets: const MobileSecrets(deviceToken: 'tok', caPem: ''));
 
-      final status = c.read(hostLinkStatusProvider(const HostRef.mobile('mobile-1'))).value;
-      expect(status?.phase, HostLinkPhase.idle);
+      // `until` keeps the autoDispose provider alive while it waits, which a
+      // bare `read(...).future` does not.
+      final status = await until(
+        c,
+        hostLinkStatusProvider(const HostRef.mobile('mobile-1')),
+        (s) => s.value?.phase == HostLinkPhase.idle,
+        what: 'idle',
+      );
+      expect(status.value?.phase, HostLinkPhase.idle);
     });
 
     test('dsh-mobile hosts are listed apart from SSH hosts', () async {
