@@ -9,7 +9,6 @@ import 'dart:io';
 
 import 'package:dsh_client/dsh_client.dart';
 import 'package:flutter/material.dart';
-import 'package:iroh_flutter/iroh_flutter.dart';
 
 import '../remote/mobile/iroh/iroh_channel.dart';
 import '../remote/mobile/iroh/iroh_descriptor.dart';
@@ -60,7 +59,7 @@ class _ProbeState extends State<_Probe> {
 
       // A fresh identity per run keeps the probe from reusing a stored pairing;
       // the host treats an unknown endpoint as a new peer and asks for the code.
-      final secret = SecretKey.generate();
+      final secret = await irohSecretKey();
       _log('dialing iroh…');
       channel = await IrohChannel.open(
         endpointId: descriptor.endpointId,
