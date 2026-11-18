@@ -46,6 +46,17 @@ IrohChannelException irohDialFailure(Object error) {
   return IrohChannelException('connect_failed', detail: '$error');
 }
 
+/// Builds this device's iroh identity, starting the native runtime first.
+///
+/// [SecretKey.generate] and [SecretKey.fromBytes] call straight into the Rust
+/// core, so they fail if the runtime is not up yet. Every caller goes through
+/// here instead of touching the constructors directly, so the ordering cannot be
+/// got wrong at a call site again.
+Future<SecretKey> irohSecretKey({List<int>? bytes}) async {
+  await Iroh.init();
+  return bytes == null ? SecretKey.generate() : SecretKey.fromBytes(bytes);
+}
+
 /// One authenticated iroh connection to a host, kept open for the link's life.
 ///
 /// Reconnecting is the caller's job: when the connection dies, [open] throws and
@@ -74,10 +85,14 @@ class IrohChannel {
     List<String> directAddresses = const <String>[],
     Duration timeout = const Duration(seconds: 20),
   }) async {
-    await Iroh.init();
-    // `Endpoint.bind` types the ALPN list as bytes, and each ALPN here is ASCII.
-    final endpoint = await Endpoint.bind(secretKey: secretKey, alpns: <List<int>>[irohAlpn.codeUnits]);
+    // Both of these can throw before a single packet leaves the device (no
+    // native library, no relay credentials, a key the core refuses), and the
+    // caller has to name that cause rather than fall back to generic text.
+    Endpoint? endpoint;
     try {
+      await Iroh.init();
+      // `Endpoint.bind` types the ALPN list as bytes, and each ALPN here is ASCII.
+      endpoint = await Endpoint.bind(secretKey: secretKey, alpns: <List<int>>[irohAlpn.codeUnits]);
       // The descriptor carries the endpoint id as lowercase hex, not z32.
       var addr = EndpointAddr(PublicKey.fromHex(endpointId));
       for (final url in relayUrls) {
@@ -86,15 +101,23 @@ class IrohChannel {
       for (final socket in directAddresses) {
         addr = addr.withIpAddr(socket);
       }
-      final connection = await endpoint.connect(addr, irohAlpn.codeUnits).timeout(timeout);
-      final channel = IrohChannel._(endpoint, connection);
+      final bound = endpoint;
+      final connection = await bound.connect(addr, irohAlpn.codeUnits).timeout(timeout);
+      final channel = IrohChannel._(bound, connection);
       // Bound opening/writing the control stream too, not only reading its reply.
       await channel._handshake(code: code, name: name, timeout: timeout).timeout(timeout);
       return channel;
     } on Object catch (error) {
       // The endpoint owns sockets and a relay task; a failed handshake must not
       // leave them running behind a dead channel.
-      await endpoint.close();
+      final opened = endpoint;
+      if (opened != null) {
+        try {
+          await opened.close();
+        } on Object {
+          // Closing a half-built endpoint must not hide the real failure.
+        }
+      }
       throw irohDialFailure(error);
     }
   }

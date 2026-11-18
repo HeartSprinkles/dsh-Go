@@ -74,7 +74,14 @@ Future<IrohPairingOutcome> pairOverIroh({
   if (!descriptor.isFreshAt(DateTime.now())) {
     throw const IrohDescriptorException('invalid_expiry');
   }
-  final secret = secretKeyBytes == null ? SecretKey.generate() : SecretKey.fromBytes(secretKeyBytes);
+  final SecretKey secret;
+  try {
+    secret = await irohSecretKey(bytes: secretKeyBytes);
+  } on Object catch (error) {
+    // A native library that will not load, or a stored key the core rejects,
+    // must reach the page as a named iroh failure instead of generic text.
+    throw irohDialFailure(error);
+  }
   final channel = await IrohChannel.open(
     endpointId: descriptor.endpointId,
     secretKey: secret,

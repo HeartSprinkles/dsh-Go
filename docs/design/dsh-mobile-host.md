@@ -122,10 +122,11 @@ ALPN `dsh-mobile-iroh/0`，线路版本 1，控制行是单行 JSON（上限 64 
 
 ### 7.4 数据面接线
 
-1. `IrohChannel.open(endpointId, secretKey, name)` → `Endpoint.bind` + `connect` + 握手。
-2. `LocalForwarder.bind(channel.openTunnel)` 在 `127.0.0.1` 上开一个临时端口，每条到该端口的 TCP 连接对应一条 iroh 流。
-3. `IrohTunnelHttpClient` 把 `DshConnection` 的 `connectionFactory` 指向那个本地端口，并把 `iroh.localhost` 名字保留为 HTTP Host/SNI，仅信任描述里的 CA（不加载系统根证书）；缺失 CA 时拒绝连接。
-4. 之后与 §2 完全一致：`native-renew` → `dsh_ma_session`/`dsh_ma_device` Cookie + `x-dsh-mobile-csrf` + `Origin` → `/api/remote.mux`。
+1. `irohSecretKey()` 先 `Iroh.init()` 再生成/读取 32 字节身份。原生运行时由 flutter_rust_bridge 提供，`SecretKey` 的两个构造函数都会直接进 Rust 核心；未初始化时它们抛 `StateError`（"flutter_rust_bridge has not been initialized"），而 `IrohChannel.open` 内部的 `Iroh.init()` 在那之后就太晚了。首次配对恰好没有已存密钥可回退，所以这条顺序是被单元测试钉住的（`iroh_pairing_native_order_test.dart`）。
+2. `IrohChannel.open(endpointId, secretKey, name)` → `Iroh.init()` + `Endpoint.bind` + `connect` + 握手；`init`/`bind` 与拨号同在一个 try 内，加载或绑定失败也映射成 `IrohChannelException`，页面才能说出原因。
+3. `LocalForwarder.bind(channel.openTunnel)` 在 `127.0.0.1` 上开一个临时端口，每条到该端口的 TCP 连接对应一条 iroh 流。
+4. `IrohTunnelHttpClient` 把 `DshConnection` 的 `connectionFactory` 指向那个本地端口，并把 `iroh.localhost` 名字保留为 HTTP Host/SNI，仅信任描述里的 CA（不加载系统根证书）；缺失 CA 时拒绝连接。
+5. 之后与 §2 完全一致：`native-renew` → `dsh_ma_session`/`dsh_ma_device` Cookie + `x-dsh-mobile-csrf` + `Origin` → `/api/remote.mux`。
 
 因为 TLS 在电脑上终止，iroh 只提供可达性与端到端加密的传输层；应用层认证、CSRF、CA 固定都不变，失败时也不会降级到明文。
 

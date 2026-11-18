@@ -341,7 +341,7 @@ class MobileHostLink implements HostLink {
     try {
       channel = await IrohChannel.open(
         endpointId: endpointId,
-        secretKey: SecretKey.fromBytes(keyBytes),
+        secretKey: await irohSecretKey(bytes: keyBytes),
         // A stored host is a known peer: `hello`, never a code the person would
         // have to read off the computer on every reconnect.
         name: host.name,
