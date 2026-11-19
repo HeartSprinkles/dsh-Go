@@ -15,6 +15,7 @@ import 'dart:typed_data';
 import 'package:iroh_flutter/iroh_flutter.dart';
 
 import '../../ssh/ssh_transport.dart';
+import 'iroh_endpoint_pool.dart';
 import 'iroh_wire.dart';
 import 'iroh_send_sink.dart';
 
@@ -62,10 +63,13 @@ Future<SecretKey> irohSecretKey({List<int>? bytes}) async {
 /// Reconnecting is the caller's job: when the connection dies, [open] throws and
 /// the link's backoff decides when to build a new [IrohChannel].
 class IrohChannel {
-  IrohChannel._(this._endpoint, this._connection);
+  IrohChannel._(this._connection, this._lease);
 
-  final Endpoint _endpoint;
   final Connection _connection;
+
+  /// Set only when this channel created the endpoint lease itself; a borrowed
+  /// endpoint stays alive for its owner after [close].
+  final IrohEndpointOwner? _lease;
 
   /// The peer's endpoint id, lowercase hex.
   String get remoteEndpointId => _connection.remoteId.toHex();
@@ -76,6 +80,10 @@ class IrohChannel {
   /// time a phone pairs; later connections use `hello`. [relayUrls] and
   /// [directAddresses] come from the descriptor; leaving both empty lets iroh
   /// resolve the address itself.
+  ///
+  /// [endpointOwner] lets a long-lived link keep one [Endpoint] — and with it
+  /// the relay connection and address cache — across reconnects. Without one
+  /// the channel binds and closes its own endpoint, which is what pairing wants.
   static Future<IrohChannel> open({
     required String endpointId,
     required SecretKey secretKey,
@@ -84,15 +92,27 @@ class IrohChannel {
     List<String> relayUrls = const <String>[],
     List<String> directAddresses = const <String>[],
     Duration timeout = const Duration(seconds: 20),
+    IrohEndpointOwner? endpointOwner,
   }) async {
     // Both of these can throw before a single packet leaves the device (no
     // native library, no relay credentials, a key the core refuses), and the
     // caller has to name that cause rather than fall back to generic text.
-    Endpoint? endpoint;
+    final borrowed = endpointOwner != null;
+    IrohEndpointOwner? acquired;
+    late final IrohEndpointOwner owner;
     try {
       await Iroh.init();
-      // `Endpoint.bind` types the ALPN list as bytes, and each ALPN here is ASCII.
-      endpoint = await Endpoint.bind(secretKey: secretKey, alpns: <List<int>>[irohAlpn.codeUnits]);
+      if (endpointOwner != null) {
+        if (!endpointOwner.isActive) throw const IrohChannelException('endpoint_closed');
+        // A shared endpoint speaks for exactly one identity; dialing a different
+        // host with it would send the wrong key to the peer.
+        if (endpointOwner.identityHex != secretKey.publicKey.toHex()) {
+          throw const IrohChannelException('endpoint_identity_mismatch');
+        }
+        owner = endpointOwner;
+      } else {
+        owner = acquired = await IrohEndpointOwner.acquire(secretKey);
+      }
       // The descriptor carries the endpoint id as lowercase hex, not z32.
       var addr = EndpointAddr(PublicKey.fromHex(endpointId));
       for (final url in relayUrls) {
@@ -101,21 +121,22 @@ class IrohChannel {
       for (final socket in directAddresses) {
         addr = addr.withIpAddr(socket);
       }
-      final bound = endpoint;
-      final connection = await bound.connect(addr, irohAlpn.codeUnits).timeout(timeout);
-      final channel = IrohChannel._(bound, connection);
+      final connection = await owner.endpoint.connect(addr, irohAlpn.codeUnits).timeout(timeout);
+      // Only a lease this call took is released by close(); a borrowed endpoint
+      // belongs to the caller.
+      final channel = IrohChannel._(connection, acquired);
       // Bound opening/writing the control stream too, not only reading its reply.
       await channel._handshake(code: code, name: name, timeout: timeout).timeout(timeout);
       return channel;
     } on Object catch (error) {
-      // The endpoint owns sockets and a relay task; a failed handshake must not
-      // leave them running behind a dead channel.
-      final opened = endpoint;
-      if (opened != null) {
+      // The endpoint owns sockets and a relay task; a failed dial must not leak
+      // a lease that nothing will release. A borrowed endpoint belongs to the
+      // caller and is left alone.
+      if (!borrowed) {
         try {
-          await opened.close();
+          await acquired?.release();
         } on Object {
-          // Closing a half-built endpoint must not hide the real failure.
+          // Releasing a half-built endpoint must not hide the real failure.
         }
       }
       throw irohDialFailure(error);
@@ -159,11 +180,73 @@ class IrohChannel {
   }
 
   Future<void> close() async {
-    // Connection.close is synchronous and fire-and-forget; the endpoint close
-    // is what actually releases the sockets and relay task.
+    // Connection.close is synchronous and fire-and-forget; releasing the lease
+    // is what actually closes the endpoint (and its sockets and relay task) once
+    // no other link shares it.
     _connection.close();
-    await _endpoint.close();
+    final lease = _lease;
+    if (lease != null) await lease.release();
   }
+}
+
+/// Shares one [Endpoint] per iroh identity across every link that uses it.
+///
+/// The native endpoint keeps the relay connection, the QUIC sockets and the
+/// address cache; iroh's own docs ask for one per application, and rebuilding it
+/// on every reconnect throws that work away. Identity matters: two phone
+/// identities must never share, because the endpoint signs with the key it was
+/// bound to. A network change is handled by [invalidate], since the binding
+/// (iroh_quic 1.4.0) does not expose `Endpoint.network_change()`.
+class IrohEndpointOwner {
+  IrohEndpointOwner._(this._lease);
+
+  final IrohEndpointLease<Endpoint> _lease;
+
+  /// Process-wide pool, keyed by the identity's public key (lowercase hex).
+  static final IrohEndpointPool<Endpoint> pool = IrohEndpointPool<Endpoint>(
+    dispose: (endpoint) async {
+      try {
+        await endpoint.close();
+      } on Object {
+        // An endpoint whose sockets are already gone must not fail teardown.
+      }
+    },
+  );
+
+  /// The endpoint this owner holds, or null when another holder already closed
+  /// it (a release that raced this acquisition).
+  Endpoint? get _endpoint => _lease.isActive ? _lease.value : null;
+
+  /// The identity this endpoint speaks for, lowercase hex.
+  String get identityHex => _lease.value.id.toHex();
+
+  /// Whether this owner can still be used to dial.
+  bool get isActive => _lease.isActive;
+
+  /// The bound endpoint; throws when the lease went stale (network change).
+  Endpoint get endpoint {
+    final value = _endpoint;
+    if (value == null) throw const IrohChannelException('endpoint_closed');
+    return value;
+  }
+
+  /// Takes (or joins) the endpoint for [secretKey]'s identity.
+  static Future<IrohEndpointOwner> acquire(SecretKey secretKey) async {
+    final identity = secretKey.publicKey.toHex();
+    final lease = await pool.acquire(
+      identity,
+      createOverride: () => Endpoint.bind(secretKey: secretKey, alpns: <List<int>>[irohAlpn.codeUnits]),
+    );
+    return IrohEndpointOwner._(lease);
+  }
+
+  /// Drops one reference. The endpoint closes when the last one goes.
+  Future<void> release() => _lease.release();
+
+  /// Closes this identity's endpoint now and rebinds on the next dial. Used
+  /// after a network change: the old sockets are bound to an interface that is
+  /// gone, and the binding cannot re-bind them in place.
+  Future<void> invalidate() => _lease.invalidate();
 }
 
 /// Bridges one iroh bidirectional stream to the [TunnelChannel] shape

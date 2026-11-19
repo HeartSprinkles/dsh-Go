@@ -139,5 +139,55 @@ void main() {
 
       expect(descriptor.isFreshAt(DateTime.now()), isFalse);
     });
+
+    // dsh-mobile does not emit the address hints yet; the client must accept both
+    // the old ten-field payload and the extended one, and never require the
+    // optional fields.
+    test('an old descriptor without address hints gets empty lists', () {
+      final descriptor = IrohPairingDescriptor.decode(jsonEncode(_valid()));
+
+      expect(descriptor.relayUrls, isEmpty);
+      expect(descriptor.directAddresses, isEmpty);
+    });
+
+    test('optional relay and direct addresses are carried through', () {
+      final value = _valid()
+        ..['relayUrls'] = <String>['https://relay.example.net/']
+        ..['directAddresses'] = <String>['192.168.1.20:55555', '[fe80::1]:55555'];
+
+      final descriptor = IrohPairingDescriptor.decode(jsonEncode(value));
+
+      expect(descriptor.relayUrls, ['https://relay.example.net/']);
+      expect(descriptor.directAddresses, ['192.168.1.20:55555', '[fe80::1]:55555']);
+    });
+
+    test('a malformed address list is rejected instead of ignored', () {
+      for (final bad in <Object>[
+        'https://relay.example.net/',
+        <Object>[1, 2],
+        <String>['ok', ' '],
+        <String>['ok', ''],
+      ]) {
+        expect(
+          () => IrohPairingDescriptor.decode(jsonEncode({..._valid(), 'relayUrls': bad})),
+          _rejects('invalid_addresses'),
+          reason: '$bad',
+        );
+        expect(
+          () => IrohPairingDescriptor.decode(jsonEncode({..._valid(), 'directAddresses': bad})),
+          _rejects('invalid_addresses'),
+          reason: '$bad',
+        );
+      }
+    });
+
+    test('an unknown field is still rejected next to the optional ones', () {
+      expect(
+        () => IrohPairingDescriptor.decode(
+          jsonEncode({..._valid(), 'relayUrls': <String>['https://r.example/'], 'evil': true}),
+        ),
+        _rejects('unexpected_fields'),
+      );
+    });
   });
 }

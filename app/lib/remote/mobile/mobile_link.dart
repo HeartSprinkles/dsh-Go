@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dsh_client/dsh_client.dart';
-import 'package:iroh_flutter/iroh_flutter.dart';
 
 import '../../l10n/l10n.dart';
 import '../link_status.dart';
@@ -82,7 +81,7 @@ class MobileHostLink implements HostLink {
     Backoff? backoff,
   }) : _pairing = pairing ?? MobilePairingClient(),
        _backoff = backoff ?? Backoff() {
-    _kickSub = kicks?.listen((_) => kick());
+    _kickSub = kicks?.listen((_) => _onNetworkKick());
   }
 
   MobileHostConfig config;
@@ -105,9 +104,21 @@ class MobileHostLink implements HostLink {
   bool _closed = false;
   bool _recovering = false;
 
-  /// The iroh data plane, rebuilt on every attempt: [Endpoint]s own sockets and
-  /// a relay task, so the previous one is always torn down first.
+  /// The iroh data plane for the current attempt: the endpoint itself is shared
+  /// per identity through [IrohEndpointOwner], but the tunnel and the loopback
+  /// forwarder are rebuilt on every attempt.
   _IrohTransport? _iroh;
+
+  /// The identity-scoped endpoint this link holds while it is iroh, and the
+  /// public key it belongs to. Kept across reconnects so the relay connection
+  /// and address cache survive; released on teardown or a network change.
+  IrohEndpointOwner? _irohOwner;
+  String? _irohOwnerKey;
+
+  /// Bumped on every network change, so a dial that was already in flight can
+  /// notice its endpoint is stale and throw the transport away.
+  int _networkGeneration = 0;
+  Future<void>? _networkRestart;
 
   @override
   HostLinkStatus get status => _status;
@@ -189,6 +200,10 @@ class MobileHostLink implements HostLink {
     // would both hold sockets and relay connections.
     await _closeIroh();
     _checkOpen();
+    if (!attemptConfig.isIroh) {
+      // Switching this host to LAN (or it was never iroh): no endpoint needed.
+      await _releaseIrohOwner();
+    }
 
     final transport = attemptConfig.isIroh ? await _openIroh(attemptConfig, secrets) : null;
     _checkOpen();
@@ -338,13 +353,29 @@ class MobileHostLink implements HostLink {
     }
 
     final IrohChannel channel;
+    final generation = _networkGeneration;
     try {
+      final secretKey = await irohSecretKey(bytes: keyBytes);
+      // Reuse this link's endpoint when it still belongs to the same identity:
+      // rebinding costs a relay handshake and throws away the address cache.
+      var owner = _irohOwner;
+      final identity = secretKey.publicKey.toHex();
+      if (owner != null && (!owner.isActive || _irohOwnerKey != identity)) {
+        await _releaseIrohOwner();
+        owner = null;
+      }
+      owner ??= await IrohEndpointOwner.acquire(secretKey);
+      _irohOwner = owner;
+      _irohOwnerKey = identity;
       channel = await IrohChannel.open(
         endpointId: endpointId,
-        secretKey: await irohSecretKey(bytes: keyBytes),
+        secretKey: secretKey,
         // A stored host is a known peer: `hello`, never a code the person would
         // have to read off the computer on every reconnect.
         name: host.name,
+        relayUrls: host.relayUrls,
+        directAddresses: host.directAddresses,
+        endpointOwner: owner,
       );
     } on IrohChannelException catch (e) {
       throw irohError(e);
@@ -353,6 +384,18 @@ class MobileHostLink implements HostLink {
         HostLinkErrorKind.unreachable,
         appL10n.remoteErrHostUnreachable,
         detail: '$e',
+        retryable: true,
+        diagnosticCode: HostLinkDiagnosticCode.irohTunnelFailed,
+      );
+    }
+    if (generation != _networkGeneration) {
+      // The network changed while this dial was in flight: the sockets it just
+      // opened belong to the old interface, so do not hand them to the client.
+      await channel.close();
+      throw HostLinkError(
+        HostLinkErrorKind.unreachable,
+        appL10n.remoteErrHostUnreachable,
+        detail: 'network_changed',
         retryable: true,
         diagnosticCode: HostLinkDiagnosticCode.irohTunnelFailed,
       );
@@ -398,6 +441,41 @@ class MobileHostLink implements HostLink {
     final transport = _iroh;
     _iroh = null;
     await transport?.close();
+  }
+
+  /// Drops this link's reference on the shared endpoint.
+  ///
+  /// Reconnects keep it (that is the point of sharing); the link's teardown and a
+  /// network change release it.
+  Future<void> _releaseIrohOwner() async {
+    final owner = _irohOwner;
+    _irohOwner = null;
+    _irohOwnerKey = null;
+    await owner?.release();
+  }
+
+  /// A network change invalidated every socket the endpoint holds.
+  ///
+  /// iroh asks Android apps to call `Endpoint::network_change()`; `iroh_quic`
+  /// 1.4.0 does not expose it, so the fallback is to close this identity's
+  /// endpoint and let the next dial bind a new one. Single-flight: repeated
+  /// connectivity events coalesce into one restart.
+  Future<void> _restartForNetworkChange() {
+    final running = _networkRestart;
+    if (running != null) return running;
+    _networkGeneration++;
+    return _networkRestart = _doNetworkRestart().whenComplete(() => _networkRestart = null);
+  }
+
+  Future<void> _doNetworkRestart() async {
+    final owner = _irohOwner;
+    await _closeIroh();
+    if (owner != null) {
+      // Invalidate closes the endpoint for every link sharing this identity and
+      // waits until its sockets are gone, so the next bind cannot collide.
+      await owner.invalidate();
+      await _releaseIrohOwner();
+    }
   }
 
   SecurityContext _securityContext(String pem) =>
@@ -483,6 +561,35 @@ class MobileHostLink implements HostLink {
     }
   }
 
+  /// Connectivity events: a live iroh link cannot keep its sockets, so it
+  /// restarts its endpoint; everything else just gets the ordinary nudge.
+  void _onNetworkKick() {
+    if (_closed) return;
+    if (_iroh != null || _irohOwner != null) {
+      // Restart in the background: the listener is synchronous and the
+      // invalidation awaits native closes.
+      unawaited(
+        _restartForNetworkChange().then((_) {
+          if (_closed) return;
+          final error = HostLinkError(
+            HostLinkErrorKind.unreachable,
+            appL10n.remoteErrHostUnreachable,
+            detail: 'network_changed',
+            retryable: true,
+            diagnosticCode: HostLinkDiagnosticCode.irohTunnelFailed,
+          );
+          if (_status.phase == HostLinkPhase.connected) {
+            _lost(error);
+          } else {
+            kick();
+          }
+        }, onError: (_) {}),
+      );
+      return;
+    }
+    kick();
+  }
+
   @override
   void kick() {
     if (_closed) return;
@@ -535,6 +642,8 @@ class MobileHostLink implements HostLink {
     try {
       if (client != null) await client.close().catchError((_) {});
       await _closeIroh();
+      await _networkRestart;
+      await _releaseIrohOwner();
     } finally {
       await _statuses.close();
       await _clients.close();

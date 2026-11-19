@@ -49,6 +49,8 @@ class IrohPairingOutcome {
     deviceExpiresAt: session.deviceExpiresAt,
     endpointId: descriptor.endpointId,
     localPort: descriptor.localPort,
+    relayUrls: descriptor.relayUrls,
+    directAddresses: descriptor.directAddresses,
   );
 
   MobileSecrets toSecrets() => MobileSecrets(
@@ -89,6 +91,8 @@ Future<IrohPairingOutcome> pairOverIroh({
     // no paired endpoint id for the host to recognise yet.
     code: descriptor.irohCode,
     name: deviceLabel,
+    relayUrls: descriptor.relayUrls,
+    directAddresses: descriptor.directAddresses,
     timeout: timeout,
   );
   try {

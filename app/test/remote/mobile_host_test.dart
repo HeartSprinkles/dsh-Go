@@ -108,6 +108,32 @@ void main() {
       expect(back.localPort, 25443);
     });
 
+    test('address hints survive the save/load round trip', () {
+      final hints = full.copyWith(
+        transport: MobileTransport.iroh,
+        endpointId: 'a' * 64,
+        localPort: 25443,
+        relayUrls: const <String>['https://relay.example.net/'],
+        directAddresses: const <String>['192.168.1.20:55555'],
+      );
+      final back = MobileHostConfig.fromJson(jsonDecode(jsonEncode(hints.toJson())))!;
+
+      expect(back, hints);
+      expect(back.relayUrls, ['https://relay.example.net/']);
+      expect(back.directAddresses, ['192.168.1.20:55555']);
+      // Equality is list-aware, so a differing hint is a different host state.
+      expect(back.copyWith(relayUrls: const <String>[]), isNot(hints));
+    });
+
+    test('a host saved before the hints existed has empty lists', () {
+      final legacy = jsonDecode(jsonEncode({'id': 'mobile-old', 'name': '电脑', 'origin': 'https://10.0.0.5:3443'}));
+      final parsed = MobileHostConfig.fromJson(legacy)!;
+
+      expect(parsed.relayUrls, isEmpty);
+      expect(parsed.directAddresses, isEmpty);
+      expect(parsed.toJson().keys, isNot(contains('relayUrls')));
+    });
+
     test('a LAN host writes no transport field, and old entries read as LAN', () {
       expect(full.toJson().keys, isNot(contains('transport')));
       expect(full.toJson().keys, isNot(contains('endpointId')));
