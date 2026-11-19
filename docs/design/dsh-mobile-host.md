@@ -93,8 +93,10 @@ dsh-mobile 是一个 DSH 社区插件，在电脑上起一个 **HTTPS 网关**�
 
 ### 7.2 配对描述（descriptor）
 
-电脑端展示的 iroh 配对描述是一段 JSON（`version: 1`、`type: "dsh-mobile-iroh-pairing"`），字段恰好十个：
+电脑端展示的 iroh 配对描述是一段 JSON（`version: 1`、`type: "dsh-mobile-iroh-pairing"`）。必填字段恰好十个：
 `version, type, endpointId, origin, localPort, irohCode, gatewayToken, caCertificate, instanceId, expiresAt`。
+
+另有两个可选字段 `relayUrls` / `directAddresses`（字符串数组），用于把电脑当前的 `EndpointAddr`（中继 URL 与直连 `ip:port`）一并交给手机。**当前 dsh-mobile 还不会输出这两个字段**，所以它们是前向兼容位：缺失时按空数组处理、走 iroh 自带发现（N0 DNS/pkarr），这既是旧描述的行为，也是当前实际运行行为。一旦电脑端开始输出，客户端无需改动即可用完整地址直连，从而绕开发现失败。其余未知字段仍然整体拒绝。
 
 校验（`IrohPairingDescriptor.decode`，对应 dsh-mobile-iroh 的 `validatePairingDescriptor`）：
 
@@ -107,9 +109,10 @@ dsh-mobile 是一个 DSH 社区插件，在电脑上起一个 **HTTPS 网关**�
 | `gatewayToken` | 43 位 base64url |
 | `caCertificate` | 非空 base64 DER，解码后 ≤1536 字节，其 sha256 必须等于 `instanceId` |
 | `expiresAt` | 未来时间，且不超过 10 分钟 |
+| `relayUrls` / `directAddresses`（可选） | 若出现必须是字符串数组，元素非空；出现但格式不对直接拒绝 |
 | 整体 | ≤ 2200 字节 |
 
-失败原因串（`IrohDescriptorException.reason`）：`descriptor_too_large`、`not_json`、`not_object`、`unexpected_fields`、`unsupported_descriptor`、`invalid_endpoint`、`invalid_port`、`invalid_code`、`invalid_token`、`invalid_instance`、`invalid_expiry`、`invalid_ca`、`invalid_origin`、`ca_fingerprint_mismatch`。
+失败原因串（`IrohDescriptorException.reason`）：`descriptor_too_large`、`not_json`、`not_object`、`unexpected_fields`、`unsupported_descriptor`、`invalid_endpoint`、`invalid_port`、`invalid_code`、`invalid_token`、`invalid_instance`、`invalid_expiry`、`invalid_ca`、`invalid_origin`、`invalid_addresses`、`ca_fingerprint_mismatch`。
 
 ### 7.3 线路协议
 
@@ -135,3 +138,11 @@ ALPN `dsh-mobile-iroh/0`，线路版本 1，控制行是单行 JSON（上限 64 
 每次连接使用同一份配置快照。在发送设备令牌前，重新校验派生 origin、端点、端口及 SecretStore CA 的 SHA-256 与 instanceId/caFingerprint 的绑定；已有 iroh 私钥但配置被改为 LAN 时拒绝连接。损坏或丢失 CA/私钥必须重新配对，不回退到系统根证书。信任确认后还会重新检查描述有效期。
 
 同一链接的 open/reconnect 是 single-flight；close 会唤醒等待 secrets/renew/mux 的任务，等待尚未结束的原生拨号并清理晚到资源，构造中途失败也释放 forwarder 和 endpoint。QUIC 的发送队列复制生产者缓冲区、按序写入，所有写入结束后才发送 FIN；写入失败会传播到 sink.done 并关闭隧道，而不是静默丢包。
+
+### 7.6 端点复用与网络切换
+
+iroh 官方建议整个应用只保留一个 `Endpoint`：它持有中继连接、QUIC socket 和地址缓存。客户端按**身份**共享（`IrohEndpointPool`/`IrohEndpointOwner`，键为公钥 hex），用引用计数管理生命周期：同一台设备的多个链接共用一个端点，最后一个引用释放时才 `close()`；不同身份永不共享，因为端点用绑定时那把私钥签名。首次配对仍使用自己的临时端点，配对结束即释放。
+
+网络切换（Wi-Fi ↔ 蜂窝、VPN 开关、回到前台）由 `networkKicks()` 触发。官方要求 Android 在此时调用 `Endpoint::network_change()`，但**当前 `iroh_quic 1.4.0` 绑定没有暴露该方法**，所以回退做法是：把该身份当前的端点标记失效并 `close()`（等待关闭完成，避免新旧端点同时占 socket），再让链接正常退避重连、重新 `bind`。失效期间旧租约 `isActive == false`，拨号会重建；若网络变化发生在拨号过程中，`_networkGeneration` 会让这次晚到的传输被丢弃并关闭。重复事件用 single-flight 合并，不会并发重启。
+
+这是能力缺失下的折中：重连会付出一次 `bind` 与中继握手，但不会出现「socket 绑在已消失的网卡上却继续复用」的错误状态。等绑定补上 `networkChange()`，只需在 `_restartForNetworkChange()` 里改为调用它，不再重建端点。

@@ -38,6 +38,8 @@ class MobileHostConfig {
     this.deviceExpiresAt,
     this.endpointId,
     this.localPort,
+    this.relayUrls = const <String>[],
+    this.directAddresses = const <String>[],
   });
 
   final String id;
@@ -76,6 +78,13 @@ class MobileHostConfig {
   /// The gateway's loopback port behind the iroh tunnel, from the descriptor.
   final int? localPort;
 
+  /// Relay hints saved at pairing time, so a reconnect can hand iroh the whole
+  /// address instead of depending on discovery. Empty means "use discovery".
+  final List<String> relayUrls;
+
+  /// Direct socket hints saved at pairing time; same fallback as [relayUrls].
+  final List<String> directAddresses;
+
   bool get isIroh => transport == MobileTransport.iroh;
 
   Map<String, Object?> toJson() => {
@@ -90,6 +99,8 @@ class MobileHostConfig {
     if (deviceExpiresAt != null) 'deviceExpiresAt': deviceExpiresAt!.millisecondsSinceEpoch,
     if (endpointId != null) 'endpointId': endpointId,
     if (localPort != null) 'localPort': localPort,
+    if (relayUrls.isNotEmpty) 'relayUrls': relayUrls,
+    if (directAddresses.isNotEmpty) 'directAddresses': directAddresses,
   };
 
   static MobileHostConfig? fromJson(Object? raw) {
@@ -117,6 +128,8 @@ class MobileHostConfig {
       deviceExpiresAt: expires is int ? DateTime.fromMillisecondsSinceEpoch(expires) : null,
       endpointId: endpointId is String ? endpointId : null,
       localPort: localPort is int ? localPort : null,
+      relayUrls: _readStringList(raw['relayUrls']),
+      directAddresses: _readStringList(raw['directAddresses']),
     );
   }
 
@@ -131,6 +144,8 @@ class MobileHostConfig {
     DateTime? Function()? deviceExpiresAt,
     String? endpointId,
     int? localPort,
+    List<String>? relayUrls,
+    List<String>? directAddresses,
   }) => MobileHostConfig(
     id: id,
     name: name ?? this.name,
@@ -143,6 +158,8 @@ class MobileHostConfig {
     deviceExpiresAt: deviceExpiresAt != null ? deviceExpiresAt() : this.deviceExpiresAt,
     endpointId: endpointId ?? this.endpointId,
     localPort: localPort ?? this.localPort,
+    relayUrls: relayUrls ?? this.relayUrls,
+    directAddresses: directAddresses ?? this.directAddresses,
   );
 
   static String newId([math.Random? random]) {
@@ -164,7 +181,9 @@ class MobileHostConfig {
       other.deviceId == deviceId &&
       other.deviceExpiresAt == deviceExpiresAt &&
       other.endpointId == endpointId &&
-      other.localPort == localPort;
+      other.localPort == localPort &&
+      _sameStrings(other.relayUrls, relayUrls) &&
+      _sameStrings(other.directAddresses, directAddresses);
 
   @override
   int get hashCode => Object.hash(
@@ -179,10 +198,31 @@ class MobileHostConfig {
     deviceExpiresAt,
     endpointId,
     localPort,
+    Object.hashAll(relayUrls),
+    Object.hashAll(directAddresses),
   );
 
   @override
   String toString() => 'MobileHostConfig($id $transport $origin)';
+}
+
+/// Reads an optional list of non-empty strings from saved JSON.
+///
+/// A hand-edited or truncated entry loses the hint rather than the host: the
+/// addresses are an optimisation, and dialing falls back to discovery.
+List<String> _readStringList(Object? raw) {
+  if (raw is! List) return const <String>[];
+  return raw.whereType<String>().where((value) => value.trim().isNotEmpty).toList(growable: false);
+}
+
+/// Whether two string lists hold the same values in the same order.
+bool _sameStrings(List<String> a, List<String> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }
 
 /// [SecretStore] keys and the secret values for one dsh-mobile host.
